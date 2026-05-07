@@ -19,4 +19,4 @@
       (lambda ()
         (draw-rectangle 200 150 400 300 240 80 60 255)
         (draw-text "edit main.scm — hot-reload" 200 100 28 240 240 240 255)
-        (draw-text "REPL: rlwrap nc localhost 1234" 200 470 18 180 180 200 255)))
+        (draw-text "REPL: rlwrap nc localhost 1234" 260 470 18 180 180 200 255)))
