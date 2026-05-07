@@ -1,0 +1,15 @@
+diff --git a/src/platforms/rcore_desktop_rgfw.c b/src/platforms/rcore_desktop_rgfw.c
+index 1a4831b..4926ee0 100755
+--- a/src/platforms/rcore_desktop_rgfw.c
++++ b/src/platforms/rcore_desktop_rgfw.c
+@@ -1767,7 +1767,9 @@ int InitPlatform(void)
+     // NOTE: RGFW's exit key is distinct from raylib's exit key and
+     // must be set to NULL to not interfere
+     RGFW_window_setExitKey(platform.window, RGFW_keyNULL);
+-    RGFW_window_makeCurrentWindow_OpenGL(platform.window);
++    #if !defined(GRAPHICS_API_OPENGL_SOFTWARE)
++        RGFW_window_makeCurrentWindow_OpenGL(platform.window);
++    #endif
+ 
+     //----------------------------------------------------------------------------
+ 
