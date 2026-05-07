@@ -22,6 +22,12 @@ static void rl_draw_rectangle(int x, int y, int w, int h,
              c.b=(unsigned char)b; c.a=(unsigned char)a;
     DrawRectangle(x, y, w, h, c);
 }
+static void rl_draw_text(const char *txt, int x, int y, int sz,
+                         int r, int g, int b, int a) {
+    Color c; c.r=(unsigned char)r; c.g=(unsigned char)g;
+             c.b=(unsigned char)b; c.a=(unsigned char)a;
+    DrawText(txt, x, y, sz, c);
+}
 EOF
 )
 
@@ -49,3 +55,19 @@ EOF
 (define draw-rectangle
   (foreign-lambda void "rl_draw_rectangle"
                   int int int int int int int int))
+
+(define draw-text
+  (foreign-lambda void "rl_draw_text"
+                  c-string int int int int int int int))
+
+(define measure-text
+  (foreign-lambda int "MeasureText" c-string int))
+
+(define is-window-ready?
+  (foreign-lambda bool "IsWindowReady"))
+
+(define get-time
+  (foreign-lambda double "GetTime"))
+
+(define get-frame-time
+  (foreign-lambda float "GetFrameTime"))

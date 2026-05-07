@@ -220,4 +220,21 @@ fetch_chicken
 fetch_raylib
 fetch_deps
 
+# CHICKEN eggs needed at compile time (TCP REPL, hash tables, list utils, threads).
+# Install into the musl-built CHICKEN's repo. Build the runtime first if missing.
+install_eggs() {
+  if [ ! -x "$ROOT/chicken-musl/bin/chicken-install" ]; then
+    log "CHICKEN not yet built — eggs will be installed on first ./build.sh."
+    return
+  fi
+  for egg in srfi-1 srfi-18 srfi-69; do
+    if [ ! -f "$ROOT/chicken-musl/lib/chicken/11/${egg}.import.so" ]; then
+      log "Installing CHICKEN egg: $egg"
+      (cd /tmp && "$ROOT/chicken-musl/bin/chicken-install" "$egg") \
+        || warn "Failed to install $egg — needs network access."
+    fi
+  done
+}
+install_eggs
+
 log "configure.sh done. Now run:  ./build.sh wayland   (or  ./build.sh x11)"

@@ -54,6 +54,15 @@ if [ ! -x "$CHICKEN_PREFIX/bin/csc" ]; then
   make           PLATFORM=linux PREFIX="$CHICKEN_PREFIX" C_COMPILER="$CC_MUSL" install
 fi
 
+# 1b. CHICKEN eggs needed by runtime.scm (TCP REPL + hash tables + threads).
+# Install into chicken-musl's repo on first build. Requires network access.
+for egg in srfi-1 srfi-18 srfi-69; do
+  if [ ! -f "$CHICKEN_PREFIX/lib/chicken/11/${egg}.import.so" ]; then
+    log "Installing CHICKEN egg: $egg"
+    (cd /tmp && "$CHICKEN_PREFIX/bin/chicken-install" "$egg")
+  fi
+done
+
 # 2. raylib 6.0 static lib (per-target — switching backends needs a clean rebuild)
 RAYLIB_STAMP="$RAYLIB_SRC/.built-$TARGET"
 if [ ! -f "$RAYLIB_STAMP" ]; then
@@ -100,8 +109,8 @@ if [ ! -f "$RAYLIB_STAMP" ]; then
   touch "$RAYLIB_STAMP"
 fi
 
-# 3. Compile + link the demo
-log "Compiling main.scm and linking ($TARGET)"
+# 3. Compile + link the runtime/host (main.scm + src/ + plugins/ load at runtime)
+log "Compiling runtime.scm + raylib.scm and linking ($TARGET)"
 cd "$ROOT"
 CSC="$CHICKEN_PREFIX/bin/csc"
 
@@ -123,22 +132,23 @@ case "$TARGET" in
     ;;
 esac
 
-# Compile raylib bindings as a separate unit
-"$CSC" -O3 -d0 -static \
+# Compile raylib bindings as a separate unit.
+# -d1 (not -d0) is required so eval/REPL can resolve module exports at runtime.
+"$CSC" -O3 -d1 -static \
        -cc "$CC_MUSL" \
        -C "-I$RAYLIB_SRC" \
        -c "$ROOT/raylib.scm" \
        -o "$BUILD/raylib.o"
 
 # csc's find-object-file searches cwd for raylib.o (matching the unit referenced
-# from main.scm's myapp.link). Run the link step from $BUILD so it finds it.
+# via runtime.scm's (declare (uses raylib))). Run the link step from $BUILD.
 cd "$BUILD"
-"$CSC" -O3 -d0 -static \
+"$CSC" -O3 -d1 -static \
        -cc "$CC_MUSL" \
        -C "-I$RAYLIB_SRC" \
        -L "$RAYLIB_SRC/libraylib.a" \
        "${LINK_LIBS[@]}" \
-       "$ROOT/main.scm" \
+       "$ROOT/runtime.scm" \
        -o myapp
 cd "$ROOT"
 
