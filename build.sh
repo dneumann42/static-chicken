@@ -123,13 +123,24 @@ case "$TARGET" in
     ;;
 esac
 
+# Compile raylib bindings as a separate unit
+"$CSC" -O3 -d0 -static \
+       -cc "$CC_MUSL" \
+       -C "-I$RAYLIB_SRC" \
+       -c "$ROOT/raylib.scm" \
+       -o "$BUILD/raylib.o"
+
+# csc's find-object-file searches cwd for raylib.o (matching the unit referenced
+# from main.scm's myapp.link). Run the link step from $BUILD so it finds it.
+cd "$BUILD"
 "$CSC" -O3 -d0 -static \
        -cc "$CC_MUSL" \
        -C "-I$RAYLIB_SRC" \
        -L "$RAYLIB_SRC/libraylib.a" \
        "${LINK_LIBS[@]}" \
-       main.scm \
-       -o "$BUILD/myapp"
+       "$ROOT/main.scm" \
+       -o myapp
+cd "$ROOT"
 
 log "Built: $BUILD/myapp"
 file "$BUILD/myapp"
