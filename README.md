@@ -28,6 +28,61 @@ git submodule add git@github.com:dneumann42/static-chicken.git vendor/static-chi
 watched for changes. `runtime.scm`, `raylib.scm`, the Raylib patch, and the
 build/bootstrap scripts stay in the submodule.
 
+## Automated Setup
+
+This creates a new app, adds `static-chicken` as a submodule, writes a starter
+`main.scm`, bootstraps the SDK, and builds the first Wayland binary:
+
+```sh
+#!/bin/sh
+set -eu
+
+APP_NAME="${1:-my-app}"
+SDK_URL="${STATIC_CHICKEN_SDK_URL:-git@github.com:dneumann42/static-chicken.git}"
+TARGET="${STATIC_CHICKEN_TARGET:-wayland}"
+
+mkdir -p "$APP_NAME"
+cd "$APP_NAME"
+
+if [ ! -d .git ]; then
+  git init
+fi
+
+mkdir -p src plugins vendor
+touch src/.gitkeep plugins/.gitkeep
+
+if [ ! -d vendor/static-chicken ]; then
+  git submodule add "$SDK_URL" vendor/static-chicken
+fi
+
+if [ ! -f main.scm ]; then
+  cat > main.scm <<'SCM'
+(once! 'window
+       (lambda ()
+         (init-window 800 600 "static-chicken app")
+         (set-target-fps 60)))
+
+(set! *on-frame*
+      (lambda ()
+        (draw-rectangle 200 150 400 300 240 80 60 255)
+        (draw-text "edit main.scm" 300 100 28 240 240 240 255)
+        (draw-text "REPL: rlwrap nc localhost 1234" 260 470 18 180 180 200 255)))
+SCM
+fi
+
+vendor/static-chicken/configure.sh
+STATIC_CHICKEN_APP_NAME="$APP_NAME" vendor/static-chicken/build.sh "$TARGET"
+
+printf '\nBuilt: %s\n' "build/static-chicken/$TARGET/$APP_NAME"
+printf 'Run from %s with:\n  %s\n' "$PWD" "build/static-chicken/$TARGET/$APP_NAME"
+```
+
+Save it anywhere as `new-static-chicken-app`, make it executable, and run:
+
+```sh
+./new-static-chicken-app my-game
+```
+
 ## Bootstrap
 
 From the consumer project root:
