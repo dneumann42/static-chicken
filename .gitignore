@@ -9,6 +9,7 @@
 /chicken-musl/
 /vendor/deps/prefix/
 /build/
+**/build/static-chicken/
 
 # CHICKEN intermediates if anything escapes into the project root
 *.import.c

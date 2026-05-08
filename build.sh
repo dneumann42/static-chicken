@@ -7,8 +7,15 @@
 #
 # Usage:  ./build.sh [wayland|x11]
 #
+# When used as a submodule, run this script from the consumer project root:
+#   vendor/static-chicken/build.sh wayland
+#
+# Environment:
+#   STATIC_CHICKEN_APP_ROOT   app source root; defaults to current directory
+#   STATIC_CHICKEN_APP_NAME   output binary name; defaults to myapp
+#
 # Stages: (1) musl-build CHICKEN  (2) musl-build raylib for the target
-#         (3) compile main.scm and link.
+#         (3) compile the SDK runtime host and link.
 
 set -euo pipefail
 
@@ -18,13 +25,16 @@ case "$TARGET" in wayland|x11) ;; *)
 esac
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+APP_ROOT="${STATIC_CHICKEN_APP_ROOT:-$PWD}"
+APP_ROOT="$(cd "$APP_ROOT" && pwd)"
+APP_NAME="${STATIC_CHICKEN_APP_NAME:-myapp}"
 CC_MUSL="${CC_MUSL:-musl-gcc}"
 JOBS="${JOBS:-$(nproc)}"
 
 CHICKEN_SRC="$ROOT/chicken-5.4.0"
 CHICKEN_PREFIX="$ROOT/chicken-musl"
 RAYLIB_SRC="$ROOT/vendor/raylib/src"
-BUILD="$ROOT/build/$TARGET"
+BUILD="$APP_ROOT/build/static-chicken/$TARGET"
 mkdir -p "$BUILD"
 
 log() { printf '\033[1;36m==> %s\033[0m\n' "$*"; }
@@ -149,11 +159,11 @@ cd "$BUILD"
        -L "$RAYLIB_SRC/libraylib.a" \
        "${LINK_LIBS[@]}" \
        "$ROOT/runtime.scm" \
-       -o myapp
+       -o "$APP_NAME"
 cd "$ROOT"
 
-log "Built: $BUILD/myapp"
-file "$BUILD/myapp"
+log "Built: $BUILD/$APP_NAME"
+file "$BUILD/$APP_NAME"
 echo
 echo "Dynamic deps:"
-ldd "$BUILD/myapp" 2>&1 | sed 's/^/  /'
+ldd "$BUILD/$APP_NAME" 2>&1 | sed 's/^/  /'

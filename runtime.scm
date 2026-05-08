@@ -3,6 +3,7 @@
 ;; Responsibilities:
 ;;   * spawn a TCP REPL server (sexp-over-TCP, 127.0.0.1:$REPL_PORT)
 ;;   * load main.scm + every .scm under src/ and plugins/, recursively
+;;     relative to $STATIC_CHICKEN_APP_ROOT (defaults to cwd)
 ;;   * watch them; reload on mtime change
 ;;   * dispatch *on-frame* every frame, catch errors
 ;;   * broadcast errors to the on-screen overlay, stderr, and every REPL client
@@ -39,8 +40,37 @@
 ;; ---------------------------------------------------------------------------
 ;; configuration
 
-(define *app-entry*  "main.scm")
-(define *watch-dirs* '("src" "plugins"))
+(define (env/default name default)
+  (let ((value (get-environment-variable name)))
+    (if (and value (not (string=? value ""))) value default)))
+
+(define (absolute-path? path)
+  (and (> (string-length path) 0)
+       (char=? (string-ref path 0) #\/)))
+
+(define (path-join root path)
+  (if (or (string=? root "")
+          (char=? (string-ref root (- (string-length root) 1)) #\/))
+      (string-append root path)
+      (string-append root "/" path)))
+
+(define *app-root*
+  (let ((root (env/default "STATIC_CHICKEN_APP_ROOT" (current-directory))))
+    (if (absolute-path? root)
+        root
+        (path-join (current-directory) root))))
+
+(define *app-entry* (env/default "STATIC_CHICKEN_ENTRY" "main.scm"))
+
+(define *watch-dirs*
+  (filter (lambda (s) (not (string=? s "")))
+          (string-split (env/default "STATIC_CHICKEN_WATCH_DIRS" "src:plugins")
+                        ":")))
+
+(define (app-path path)
+  (if (absolute-path? path)
+      path
+      (path-join *app-root* path)))
 
 (define *repl-host* "127.0.0.1")
 (define *repl-port*
@@ -122,12 +152,14 @@
            (string=? (substring p (- lp ls) lp) suf)))))
 
 (define (enumerate-watch-files)
-  (let ((files (if (file-exists? *app-entry*) (list *app-entry*) '())))
+  (let* ((entry (app-path *app-entry*))
+         (files (if (file-exists? entry) (list entry) '())))
     (for-each
      (lambda (dir)
-       (when (and (file-exists? dir) (directory? dir))
-         (set! files
-               (append (find-files dir test: scm-file?) files))))
+       (let ((rooted-dir (app-path dir)))
+         (when (and (file-exists? rooted-dir) (directory? rooted-dir))
+           (set! files
+                 (append (find-files rooted-dir test: scm-file?) files)))))
      *watch-dirs*)
     (sort (delete-duplicates files string=?) string<?)))
 
