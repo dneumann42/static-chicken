@@ -32,6 +32,7 @@ CC_MUSL="${CC_MUSL:-musl-gcc}"
 JOBS="${JOBS:-$(nproc)}"
 
 CHICKEN_SRC="$ROOT/chicken-5.4.0"
+CHICKEN_TARBALL="$ROOT/chicken-5.4.0.tar.gz"
 CHICKEN_PREFIX="$ROOT/chicken-musl"
 RAYLIB_SRC="$ROOT/vendor/raylib/src"
 BUILD="$APP_ROOT/build/static-chicken/$TARGET"
@@ -57,10 +58,21 @@ fi
 # 1. CHICKEN musl rebuild (one-time, shared between targets)
 if [ ! -x "$CHICKEN_PREFIX/bin/csc" ]; then
   log "Building CHICKEN 5.4.0 with musl into $CHICKEN_PREFIX"
+
+  # CHICKEN release tarballs include pregenerated C sources and can be built
+  # without a compatible host chicken. Do not run spotless here: it deletes
+  # those generated files and may make make pick up an incompatible system
+  # chicken, such as CHICKEN 6 while building CHICKEN 5.4.0.
+  if [ ! -f "$CHICKEN_SRC/buildid" ] || [ ! -f "$CHICKEN_SRC/library.c" ]; then
+    [ -f "$CHICKEN_TARBALL" ] \
+      || { echo "ERROR: $CHICKEN_TARBALL missing. Run ./configure.sh first."; exit 1; }
+    log "Restoring CHICKEN release sources from tarball"
+    rm -rf "$CHICKEN_SRC"
+    tar -xzf "$CHICKEN_TARBALL" -C "$ROOT"
+  fi
+
   cd "$CHICKEN_SRC"
-  make confclean >/dev/null 2>&1 || true
-  make spotless  >/dev/null 2>&1 || true
-  make -j"$JOBS" PLATFORM=linux PREFIX="$CHICKEN_PREFIX" C_COMPILER="$CC_MUSL"
+  make PLATFORM=linux PREFIX="$CHICKEN_PREFIX" C_COMPILER="$CC_MUSL"
   make           PLATFORM=linux PREFIX="$CHICKEN_PREFIX" C_COMPILER="$CC_MUSL" install
 fi
 

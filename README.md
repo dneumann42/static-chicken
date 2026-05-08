@@ -30,19 +30,21 @@ build/bootstrap scripts stay in the submodule.
 
 ## Automated Setup
 
-This creates a new app, adds `static-chicken` as a submodule, writes a starter
-`main.scm`, bootstraps the SDK, and builds the first Wayland binary:
+Put this script in the project directory you want to turn into a
+`static-chicken` app. It adds `static-chicken` as a submodule, writes a starter
+`main.scm`, bootstraps the SDK, and builds the first Wayland binary. The binary
+name is derived from the project directory name.
 
 ```sh
 #!/bin/sh
 set -eu
 
-APP_NAME="${1:-my-app}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+APP_NAME="${STATIC_CHICKEN_APP_NAME:-$(basename "$SCRIPT_DIR")}"
 SDK_URL="${STATIC_CHICKEN_SDK_URL:-git@github.com:dneumann42/static-chicken.git}"
 TARGET="${STATIC_CHICKEN_TARGET:-wayland}"
 
-mkdir -p "$APP_NAME"
-cd "$APP_NAME"
+cd "$SCRIPT_DIR"
 
 if [ ! -d .git ]; then
   git init
@@ -77,10 +79,12 @@ printf '\nBuilt: %s\n' "build/static-chicken/$TARGET/$APP_NAME"
 printf 'Run from %s with:\n  %s\n' "$PWD" "build/static-chicken/$TARGET/$APP_NAME"
 ```
 
-Save it anywhere as `new-static-chicken-app`, make it executable, and run:
+Save it as `bootstrap.sh` in a project directory, make it executable, and run:
 
 ```sh
-./new-static-chicken-app my-game
+mkdir -p ~/Projects/s-expr-edit
+cd ~/Projects/s-expr-edit
+./bootstrap.sh
 ```
 
 ## Bootstrap
@@ -131,6 +135,12 @@ If you run it from another directory, set `STATIC_CHICKEN_APP_ROOT`:
 ```sh
 STATIC_CHICKEN_APP_ROOT=/path/to/my-app build/static-chicken/wayland/myapp
 ```
+
+If CHICKEN fails while building `user-pass.scm` with an unresolved
+`make-parameter`, the build picked up an incompatible system `chicken` after the
+release C sources were removed. Update the `static-chicken` submodule and rerun
+`vendor/static-chicken/build.sh`; the script restores the release sources from
+`chicken-5.4.0.tar.gz` before building.
 
 ## Runtime Configuration
 
