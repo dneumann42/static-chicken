@@ -5,12 +5,13 @@
 ;;   * load main.scm + every .scm under src/ and plugins/, recursively
 ;;     relative to $STATIC_CHICKEN_APP_ROOT (defaults to cwd)
 ;;   * watch them; reload on mtime change
-;;   * dispatch *on-frame* every frame, catch errors
+;;   * dispatch *on-draw* and *on-update* every frame, catch errors
 ;;   * broadcast errors to the on-screen overlay, stderr, and every REPL client
 ;;
 ;; Anything user code can call (init-window, draw-rectangle, ...) lives in
 ;; raylib.scm (also baked in). User-facing globals introduced here:
-;;   *on-frame*       thunk run every frame
+;;   *on-update*     thunk run every frame
+;;   *on-draw*       thunk run every frame
 ;;   *last-error*     #f or string
 ;;   once! KEY THUNK  CL-defvar-style idempotent init
 
@@ -27,7 +28,8 @@
 ;; ---------------------------------------------------------------------------
 ;; user-facing globals
 
-(define *on-frame*     (lambda () #f))
+(define *on-draw*     (lambda () #f))
+(define *on-update*   (lambda () #f))
 (define *last-error*   #f)
 (define *repl-clients* '())
 
@@ -263,6 +265,40 @@
                 *repl-conns*)))
 
 ;; ---------------------------------------------------------------------------
+;; Helpers
+(define-syntax define-update
+  (syntax-rules ()
+    ((_ (arg ...) body ...)
+     (set! *on-update*
+       (lambda (arg ...)
+         body ...)))))
+
+(define-syntax define-draw
+  (syntax-rules ()
+    ((_ (arg ...) body ...)
+     (set! *on-draw*
+       (lambda (arg ...)
+         body ...)))))
+
+(define (install-helper-syntax!)
+  (eval
+   '(define-syntax define-update
+      (syntax-rules ()
+        ((_ (arg ...) body ...)
+         (set! *on-update*
+           (lambda (arg ...)
+             body ...)))))
+   (interaction-environment))
+  (eval
+   '(define-syntax define-draw
+      (syntax-rules ()
+        ((_ (arg ...) body ...)
+         (set! *on-draw*
+           (lambda (arg ...)
+             body ...)))))
+   (interaction-environment)))
+
+;; ---------------------------------------------------------------------------
 ;; main
 
 (define (frame!)
@@ -270,20 +306,22 @@
   (poll-repl-input!)
   (check-watches!)
   (cond
-    ((not (is-window-ready?))
-     (thread-sleep! 0.05))
-    ((window-should-close?)
-     #f)
-    (else
-     (begin-drawing)
-     (clear-background 30 30 40 255)
-     (safe-call! *on-frame*)
-     (when *last-error* (draw-error-overlay *last-error*))
-     (end-drawing)))
+   ((not (is-window-ready?))
+    (thread-sleep! 0.05))
+   ((window-should-close?)
+    #f)
+   (else
+    (safe-call! *on-update*)
+    (begin-drawing)
+    (clear-background 30 30 40 255)
+    (safe-call! *on-draw*)
+    (when *last-error* (draw-error-overlay *last-error*))
+    (end-drawing)))
   (thread-yield!))
 
 (define (main)
   (start-repl-server!)
+  (install-helper-syntax!)
   (check-watches!)
   (let loop ()
     (frame!)

@@ -9,6 +9,7 @@
 (import (chicken foreign))
 
 (foreign-declare "#include \"raylib.h\"")
+(foreign-declare "#include <string.h>")
 
 (foreign-declare #<<EOF
 static void rl_clear_background(int r, int g, int b, int a) {
@@ -28,14 +29,136 @@ static void rl_draw_text(const char *txt, int x, int y, int sz,
              c.b=(unsigned char)b; c.a=(unsigned char)a;
     DrawText(txt, x, y, sz, c);
 }
+static const char *rl_get_text_input(void) {
+    static char buf[4096];
+    int len = 0;
+    int codepoint = GetCharPressed();
+
+    buf[0] = '\0';
+    while (codepoint != 0) {
+        int bytes = 0;
+        const char *utf8 = CodepointToUTF8(codepoint, &bytes);
+        if (utf8 != NULL && bytes > 0 && len + bytes < (int)sizeof(buf)) {
+            memcpy(buf + len, utf8, (size_t)bytes);
+            len += bytes;
+            buf[len] = '\0';
+        }
+        codepoint = GetCharPressed();
+    }
+
+    return buf;
+}
 EOF
 )
+
+(define key-null 0)
+(define key-space 32)
+(define key-apostrophe 39)
+(define key-comma 44)
+(define key-minus 45)
+(define key-period 46)
+(define key-slash 47)
+(define key-zero 48)
+(define key-one 49)
+(define key-two 50)
+(define key-three 51)
+(define key-four 52)
+(define key-five 53)
+(define key-six 54)
+(define key-seven 55)
+(define key-eight 56)
+(define key-nine 57)
+(define key-semicolon 59)
+(define key-equal 61)
+(define key-a 65)
+(define key-b 66)
+(define key-c 67)
+(define key-d 68)
+(define key-e 69)
+(define key-f 70)
+(define key-g 71)
+(define key-h 72)
+(define key-i 73)
+(define key-j 74)
+(define key-k 75)
+(define key-l 76)
+(define key-m 77)
+(define key-n 78)
+(define key-o 79)
+(define key-p 80)
+(define key-q 81)
+(define key-r 82)
+(define key-s 83)
+(define key-t 84)
+(define key-u 85)
+(define key-v 86)
+(define key-w 87)
+(define key-x 88)
+(define key-y 89)
+(define key-z 90)
+(define key-left-bracket 91)
+(define key-backslash 92)
+(define key-right-bracket 93)
+(define key-grave 96)
+(define key-escape 256)
+(define key-enter 257)
+(define key-tab 258)
+(define key-backspace 259)
+(define key-insert 260)
+(define key-delete 261)
+(define key-right 262)
+(define key-left 263)
+(define key-down 264)
+(define key-up 265)
+(define key-page-up 266)
+(define key-page-down 267)
+(define key-home 268)
+(define key-end 269)
+(define key-caps-lock 280)
+(define key-scroll-lock 281)
+(define key-num-lock 282)
+(define key-print-screen 283)
+(define key-pause 284)
+(define key-f1 290)
+(define key-f2 291)
+(define key-f3 292)
+(define key-f4 293)
+(define key-f5 294)
+(define key-f6 295)
+(define key-f7 296)
+(define key-f8 297)
+(define key-f9 298)
+(define key-f10 299)
+(define key-f11 300)
+(define key-f12 301)
+(define key-left-shift 340)
+(define key-left-control 341)
+(define key-left-alt 342)
+(define key-left-super 343)
+(define key-right-shift 344)
+(define key-right-control 345)
+(define key-right-alt 346)
+(define key-right-super 347)
+(define key-kb-menu 348)
+(define mouse-button-left 0)
+(define mouse-button-right 1)
+(define mouse-button-middle 2)
+(define mouse-button-side 3)
+(define mouse-button-extra 4)
+(define mouse-button-forward 5)
+(define mouse-button-back 6)
 
 (define init-window
   (foreign-lambda void "InitWindow" int int c-string))
 
 (define close-window
   (foreign-lambda void "CloseWindow"))
+
+(define get-screen-width
+  (foreign-lambda int "GetScreenWidth"))
+
+(define get-screen-height
+  (foreign-lambda int "GetScreenHeight"))
 
 (define window-should-close?
   (foreign-lambda bool "WindowShouldClose"))
@@ -62,6 +185,60 @@ EOF
 
 (define measure-text
   (foreign-lambda int "MeasureText" c-string int))
+
+(define key-pressed?
+  (foreign-lambda bool "IsKeyPressed" int))
+
+(define key-pressed-repeat?
+  (foreign-lambda bool "IsKeyPressedRepeat" int))
+
+(define key-down?
+  (foreign-lambda bool "IsKeyDown" int))
+
+(define key-released?
+  (foreign-lambda bool "IsKeyReleased" int))
+
+(define key-up?
+  (foreign-lambda bool "IsKeyUp" int))
+
+(define get-key-pressed
+  (foreign-lambda int "GetKeyPressed"))
+
+(define get-char-pressed
+  (foreign-lambda int "GetCharPressed"))
+
+(define get-key-name
+  (foreign-lambda c-string "GetKeyName" int))
+
+(define get-text-input
+  (foreign-lambda c-string "rl_get_text_input"))
+
+(define mouse-button-pressed?
+  (foreign-lambda bool "IsMouseButtonPressed" int))
+
+(define mouse-button-down?
+  (foreign-lambda bool "IsMouseButtonDown" int))
+
+(define mouse-button-released?
+  (foreign-lambda bool "IsMouseButtonReleased" int))
+
+(define mouse-button-up?
+  (foreign-lambda bool "IsMouseButtonUp" int))
+
+(define get-mouse-x
+  (foreign-lambda int "GetMouseX"))
+
+(define get-mouse-y
+  (foreign-lambda int "GetMouseY"))
+
+(define set-mouse-position
+  (foreign-lambda void "SetMousePosition" int int))
+
+(define get-mouse-wheel-move
+  (foreign-lambda float "GetMouseWheelMove"))
+
+(define set-mouse-cursor
+  (foreign-lambda void "SetMouseCursor" int))
 
 (define is-window-ready?
   (foreign-lambda bool "IsWindowReady"))

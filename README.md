@@ -64,7 +64,7 @@ if [ ! -f main.scm ]; then
          (init-window 800 600 "static-chicken app")
          (set-target-fps 60)))
 
-(set! *on-frame*
+(set! *on-draw*
       (lambda ()
         (draw-rectangle 200 150 400 300 240 80 60 255)
         (draw-text "edit main.scm" 300 100 28 240 240 240 255)
@@ -162,7 +162,27 @@ The host reads these environment variables at startup:
          (set-target-fps 60)))
 ```
 
-Set `*on-frame*` to the thunk the host should call every frame.
+Set `*on-draw*` to the thunk the host should call every draw frame.
+
+Input helpers mirror Raylib's polling API:
+
+```scheme
+(key-pressed? key-enter)
+(key-down? key-left-shift)
+(mouse-button-pressed? mouse-button-left)
+(get-mouse-x)
+(get-mouse-y)
+```
+
+For text fields, call `get-text-input` once per frame to drain queued UTF-8
+text input:
+
+```scheme
+(let ((typed (get-text-input)))
+  (unless (string=? typed "")
+    ;; append typed to your editor/input buffer
+    typed))
+```
 
 ## Updating Apps
 

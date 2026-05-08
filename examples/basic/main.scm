@@ -12,7 +12,7 @@
          (init-window 800 600 "static-chicken - live")
          (set-target-fps 60)))
 
-(set! *on-frame*
+(set! *on-draw*
       (lambda ()
         (draw-rectangle 200 150 400 300 240 80 60 255)
         (draw-text "edit examples/basic/main.scm" 210 100 28 240 240 240 255)

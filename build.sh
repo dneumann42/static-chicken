@@ -178,4 +178,4 @@ log "Built: $BUILD/$APP_NAME"
 file "$BUILD/$APP_NAME"
 echo
 echo "Dynamic deps:"
-ldd "$BUILD/$APP_NAME" 2>&1 | sed 's/^/  /'
+ldd "$BUILD/$APP_NAME" 2>&1 | sed 's/^/  /' || true
