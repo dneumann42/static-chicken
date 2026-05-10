@@ -12,6 +12,21 @@
 (foreign-declare "#include <string.h>")
 
 (foreign-declare #<<EOF
+static Font rl_loaded_font = { 0 };
+
+int rl_load_font(const char *path, int fontSize) {
+    if (rl_loaded_font.texture.id != 0) {
+        UnloadFont(rl_loaded_font);
+        rl_loaded_font = (Font){ 0 };
+    }
+    rl_loaded_font = LoadFontEx(path, fontSize, NULL, 0);
+    if (rl_loaded_font.texture.id != 0) {
+        SetTextureFilter(rl_loaded_font.texture, TEXTURE_FILTER_BILINEAR);
+        return 1;
+    }
+    return 0;
+}
+
 static void rl_clear_background(int r, int g, int b, int a) {
     Color c; c.r=(unsigned char)r; c.g=(unsigned char)g;
              c.b=(unsigned char)b; c.a=(unsigned char)a;
@@ -27,7 +42,19 @@ static void rl_draw_text(const char *txt, int x, int y, int sz,
                          int r, int g, int b, int a) {
     Color c; c.r=(unsigned char)r; c.g=(unsigned char)g;
              c.b=(unsigned char)b; c.a=(unsigned char)a;
-    DrawText(txt, x, y, sz, c);
+    if (rl_loaded_font.texture.id != 0) {
+        Vector2 pos = { (float)x, (float)y };
+        DrawTextEx(rl_loaded_font, txt, pos, (float)sz, 1.0f, c);
+    } else {
+        DrawText(txt, x, y, sz, c);
+    }
+}
+static int rl_measure_text(const char *txt, int fontSize) {
+    if (rl_loaded_font.texture.id != 0) {
+        Vector2 sz = MeasureTextEx(rl_loaded_font, txt, (float)fontSize, 1.0f);
+        return (int)sz.x;
+    }
+    return MeasureText(txt, fontSize);
 }
 static const char *rl_get_text_input(void) {
     static char buf[4096];
@@ -47,6 +74,16 @@ static const char *rl_get_text_input(void) {
     }
 
     return buf;
+}
+
+static void rl_set_texture_filter(unsigned int id, int filter) {
+    Texture2D tex = { id, 0, 0, 0, 0 };
+    SetTextureFilter(tex, filter);
+}
+
+static float rl_get_window_scale_dpi_x(void) {
+    Vector2 dpi = GetWindowScaleDPI();
+    return dpi.x;
 }
 EOF
 )
@@ -148,6 +185,30 @@ EOF
 (define mouse-button-forward 5)
 (define mouse-button-back 6)
 
+(define texture-filter-point 0)
+(define texture-filter-bilinear 1)
+(define texture-filter-trilinear 2)
+(define texture-filter-anisotropic-4x 3)
+(define texture-filter-anisotropic-8x 4)
+(define texture-filter-anisotropic-16x 5)
+
+(define flag-vsync-hint #x00000040)
+(define flag-fullscreen-mode #x00000002)
+(define flag-window-resizable #x00000004)
+(define flag-window-undecorated #x00000008)
+(define flag-window-hidden #x00000080)
+(define flag-window-minimized #x00000200)
+(define flag-window-maximized #x00000400)
+(define flag-window-unfocused #x00000800)
+(define flag-window-topmost #x00001000)
+(define flag-window-always-run #x00000100)
+(define flag-window-transparent #x00000010)
+(define flag-window-highdpi #x00002000)
+(define flag-window-mouse-passthrough #x00004000)
+(define flag-borderless-windowed-mode #x00008000)
+(define flag-msaa-4x-hint #x00000020)
+(define flag-interlaced-hint #x00010000)
+
 (define init-window
   (foreign-lambda void "InitWindow" int int c-string))
 
@@ -172,6 +233,9 @@ EOF
 (define set-target-fps
   (foreign-lambda void "SetTargetFPS" int))
 
+(define set-exit-key
+  (foreign-lambda void "SetExitKey" int))
+
 (define clear-background
   (foreign-lambda void "rl_clear_background" int int int int))
 
@@ -183,8 +247,11 @@ EOF
   (foreign-lambda void "rl_draw_text"
                   c-string int int int int int int int))
 
+(define load-font-ex
+  (foreign-lambda bool "rl_load_font" c-string int))
+
 (define measure-text
-  (foreign-lambda int "MeasureText" c-string int))
+  (foreign-lambda int "rl_measure_text" c-string int))
 
 (define key-pressed?
   (foreign-lambda bool "IsKeyPressed" int))
@@ -248,3 +315,39 @@ EOF
 
 (define get-frame-time
   (foreign-lambda float "GetFrameTime"))
+
+(define set-texture-filter
+  (foreign-lambda void "rl_set_texture_filter" unsigned-int int))
+
+(define set-text-line-spacing
+  (foreign-lambda void "SetTextLineSpacing" int))
+
+(define load-file-text
+  (foreign-lambda c-string "LoadFileText" c-string))
+
+(define unload-file-text
+  (foreign-lambda void "UnloadFileText" c-string))
+
+(define save-file-text
+  (foreign-lambda bool "SaveFileText" c-string c-string))
+
+(define set-clipboard-text
+  (foreign-lambda void "SetClipboardText" c-string))
+
+(define get-clipboard-text
+  (foreign-lambda c-string "GetClipboardText"))
+
+(define set-window-title
+  (foreign-lambda void "SetWindowTitle" c-string))
+
+(define set-window-size
+  (foreign-lambda void "SetWindowSize" int int))
+
+(define is-window-resized?
+  (foreign-lambda bool "IsWindowResized"))
+
+(define get-window-scale-dpi
+  (foreign-lambda float "rl_get_window_scale_dpi_x"))
+
+(define set-config-flags
+  (foreign-lambda void "SetConfigFlags" unsigned-int))
