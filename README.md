@@ -181,6 +181,20 @@ Stdout is tee'd to the terminal and to an in-game log panel. Press `F10` to show
 or hide the log panel; use the mouse wheel or `PageUp` / `PageDown` to scroll.
 The panel keeps the last `STATIC_CHICKEN_LOG_LINES` lines.
 
+Press `F9` to show the watch panel. Enter a Scheme expression to pin it on
+screen; each pinned expression is compiled into a thunk, evaluated every frame,
+and pretty-printed in a sticker. Records without custom printers are shown as
+their raw record vector, including the type and slots. For named fields, add a
+CHICKEN record printer:
+
+```scheme
+(set-record-printer! point
+  (lambda (p out)
+    (fprintf out "#,(point x: ~S y: ~S)" (point-x p) (point-y p))))
+```
+
+Right-click a sticker to remove it.
+
 Space Mono is distributed under the SIL Open Font License 1.1. The font and its
 license are shipped together in `assets/fonts/`, as required by the OFL when
 redistributing the font with software.

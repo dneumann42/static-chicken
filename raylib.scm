@@ -136,11 +136,13 @@ static const char *rl_get_text_input(void) {
     buf[0] = '\0';
     while (codepoint != 0) {
         int bytes = 0;
-        const char *utf8 = CodepointToUTF8(codepoint, &bytes);
-        if (utf8 != NULL && bytes > 0 && len + bytes < (int)sizeof(buf)) {
-            memcpy(buf + len, utf8, (size_t)bytes);
-            len += bytes;
-            buf[len] = '\0';
+        if ((codepoint >= 32) && (codepoint != 127)) {
+            const char *utf8 = CodepointToUTF8(codepoint, &bytes);
+            if (utf8 != NULL && bytes > 0 && len + bytes < (int)sizeof(buf)) {
+                memcpy(buf + len, utf8, (size_t)bytes);
+                len += bytes;
+                buf[len] = '\0';
+            }
         }
         codepoint = GetCharPressed();
     }

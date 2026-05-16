@@ -19,8 +19,10 @@
 
 (import (chicken base) (chicken eval) (chicken load)
         (chicken file) (chicken file.posix)
+        (chicken memory representation)
         (chicken tcp)
         (chicken condition) (chicken format)
+        (chicken pretty-print)
         (chicken process) (chicken process-context) (chicken port)
         (chicken string) (chicken sort)
         (srfi 1) (srfi 9) (srfi 18) (srfi 69))
@@ -40,6 +42,10 @@
 (define *log-partial* "")
 (define *log-visible?* #f)
 (define *log-scroll* 0)
+(define *watch-visible?* #f)
+(define *watch-input* "")
+(define *watch-next-id* 1)
+(define *pinned-watches* '())
 
 (define *once-keys* (make-hash-table))
 (define (once! key thunk)
@@ -282,6 +288,265 @@
      (make-output-port stdout-log-write
                        (lambda () (flush-output *stdout-port*))
                        stdout-log-flush))))
+
+;; ---------------------------------------------------------------------------
+;; pinned watch overlay
+
+(define-record-type <pinned-watch>
+  (make-pinned-watch id source thunk text)
+  pinned-watch?
+  (id pinned-watch-id)
+  (source pinned-watch-source)
+  (thunk pinned-watch-thunk)
+  (text pinned-watch-text set-pinned-watch-text!))
+
+(define (watch-visible-value value)
+  (let ((seen (make-hash-table eq?)))
+    (let loop ((value value)
+               (depth 0))
+      (cond
+        ((> depth 16) '...)
+        ((record-instance? value)
+         (cond
+           ((record-printer (record-instance-type value)) value)
+           ((hash-table-exists? seen value) '...)
+           (else
+            (hash-table-set! seen value #t)
+            (loop (record->vector value) (+ depth 1)))))
+        ((pair? value)
+         (cond
+           ((hash-table-exists? seen value) '...)
+           (else
+            (hash-table-set! seen value #t)
+            (cons (loop (car value) (+ depth 1))
+                  (loop (cdr value) (+ depth 1))))))
+        ((vector? value)
+         (cond
+           ((hash-table-exists? seen value) '#(...))
+           (else
+            (hash-table-set! seen value #t)
+            (let* ((n (vector-length value))
+                   (out (make-vector n)))
+              (let fill ((i 0))
+                (when (< i n)
+                  (vector-set! out i (loop (vector-ref value i) (+ depth 1)))
+                  (fill (+ i 1))))
+              out))))
+        (else value)))))
+
+(define (pretty-value-string value)
+  (let* ((s (with-output-to-string
+              (lambda () (pretty-print (watch-visible-value value)))))
+         (n (string-length s)))
+    (if (and (> n 0) (char=? (string-ref s (- n 1)) #\newline))
+        (substring s 0 (- n 1))
+        s)))
+
+(define (read-watch-expression source)
+  (with-input-from-string source
+    (lambda ()
+      (let ((expr (read)))
+        (if (eof-object? expr)
+            (error "empty watch expression")
+            expr)))))
+
+(define (compile-watch-thunk source)
+  (let ((expr (read-watch-expression source)))
+    (eval `(lambda () ,expr) (interaction-environment))))
+
+(define (add-pinned-watch! source)
+  (let* ((thunk (compile-watch-thunk source))
+         (watch (make-pinned-watch *watch-next-id*
+                                   source
+                                   thunk
+                                   "(pending)")))
+    (set! *watch-next-id* (+ *watch-next-id* 1))
+    (set! *pinned-watches* (append *pinned-watches* (list watch)))))
+
+(define (trim-whitespace s)
+  (let* ((n (string-length s))
+         (start (let loop ((i 0))
+                  (cond
+                    ((>= i n) n)
+                    ((char-whitespace? (string-ref s i)) (loop (+ i 1)))
+                    (else i))))
+         (end (let loop ((i (- n 1)))
+                (cond
+                  ((< i start) start)
+                  ((char-whitespace? (string-ref s i)) (loop (- i 1)))
+                  (else (+ i 1))))))
+    (substring s start end)))
+
+(define (submit-watch-input!)
+  (let ((source (trim-whitespace *watch-input*)))
+    (unless (string=? source "")
+      (handle-exceptions exn
+        (broadcast-error! (condition->runtime-error exn "watch"))
+        (add-pinned-watch! source)
+        (set! *watch-input* "")))))
+
+(define (update-pinned-watch! watch)
+  (set-pinned-watch-text!
+   watch
+   (handle-exceptions exn
+     (string-append "[error] " (condition->string exn))
+     (pretty-value-string ((pinned-watch-thunk watch))))))
+
+(define (update-pinned-watches!)
+  (for-each update-pinned-watch! *pinned-watches*))
+
+(define (watch-panel-layout)
+  (let* ((pad 12)
+         (panel-width (min (- (get-screen-width) 16) 1120))
+         (panel-height 82)
+         (x 8)
+         (log-layout (and *log-visible?* (log-panel-layout)))
+         (bottom (if log-layout
+                     (- (list-ref log-layout 1) 8)
+                     (- (get-screen-height) 8)))
+         (y (- bottom panel-height)))
+    (list x y panel-width panel-height pad)))
+
+(define (watch-input-display)
+  (string-append "> " *watch-input*
+                 (if *watch-visible?* "_" "")))
+
+(define (toggle-watch-panel!)
+  (when (key-pressed? key-f9)
+    (set! *watch-visible?* (not *watch-visible?*))))
+
+(define (trim-last-char s)
+  (let ((n (string-length s)))
+    (if (> n 0)
+        (substring s 0 (- n 1))
+        s)))
+
+(define (handle-watch-panel-actions!)
+  (toggle-watch-panel!)
+  (when *watch-visible?*
+    (let ((typed (get-text-input)))
+      (unless (string=? typed "")
+        (set! *watch-input* (string-append *watch-input* typed))))
+    (when (or (key-pressed? key-backspace)
+              (key-pressed-repeat? key-backspace))
+      (set! *watch-input* (trim-last-char *watch-input*)))
+    (when (key-pressed? key-enter)
+      (submit-watch-input!))
+    (when (key-pressed? key-escape)
+      (set! *watch-visible?* #f))))
+
+(define (watch-sticker-lines watch)
+  (append
+   (wrap-line (pinned-watch-source watch) 34)
+   (append-map (lambda (line) (wrap-line line 38))
+               (string-split (pinned-watch-text watch) "\n"))))
+
+(define (watch-sticker-layouts)
+  (let* ((screen-width (get-screen-width))
+         (screen-height (get-screen-height))
+         (margin 8)
+         (pad 10)
+         (line-height 20)
+         (sticker-width (min 360 (max 220 (- screen-width (* margin 2)))))
+         (max-y (- screen-height margin))
+         (start-y 8))
+    (let loop ((watches *pinned-watches*)
+               (x margin)
+               (y start-y)
+               (row-height 0)
+               (out '()))
+      (cond
+        ((null? watches)
+         (reverse out))
+        (else
+         (let* ((watch (car watches))
+                (lines (watch-sticker-lines watch))
+                (height (+ (* line-height (length lines)) (* pad 2)))
+                (next-x (+ x sticker-width margin))
+                (fits-row? (<= next-x screen-width))
+                (place-x (if fits-row? x margin))
+                (place-y (if fits-row? y (+ y row-height margin)))
+                (place-y (if (> (+ place-y height) max-y) start-y place-y))
+                (next-row-height (if fits-row?
+                                     (max row-height height)
+                                     height)))
+           (loop (cdr watches)
+                 (+ place-x sticker-width margin)
+                 place-y
+                 next-row-height
+                 (cons (list watch place-x place-y sticker-width height lines)
+                       out))))))))
+
+(define (remove-pinned-watch-at! mx my)
+  (let* ((layouts (watch-sticker-layouts))
+         (hit (find (lambda (layout)
+                      (point-in-rect? mx my
+                                      (list-ref layout 1)
+                                      (list-ref layout 2)
+                                      (list-ref layout 3)
+                                      (list-ref layout 4)))
+                    layouts)))
+    (when hit
+      (let ((id (pinned-watch-id (car hit))))
+        (set! *pinned-watches*
+              (filter (lambda (watch)
+                        (not (= (pinned-watch-id watch) id)))
+                      *pinned-watches*))))))
+
+(define (handle-pinned-watch-actions!)
+  (when (mouse-button-pressed? mouse-button-right)
+    (remove-pinned-watch-at! (get-mouse-x) (get-mouse-y))))
+
+(define (draw-pinned-watches)
+  (when (pair? *pinned-watches*)
+    (ensure-debug-font!)
+    (for-each
+     (lambda (layout)
+       (let ((watch (list-ref layout 0))
+             (x (list-ref layout 1))
+             (y (list-ref layout 2))
+             (w (list-ref layout 3))
+             (h (list-ref layout 4))
+             (lines (list-ref layout 5))
+             (pad 10)
+             (line-height 20))
+         (draw-rectangle x y w h 14 16 18 220)
+         (draw-rectangle-lines x y w h 125 225 185 255)
+         (let loop ((ls lines)
+                    (line-y (+ y pad))
+                    (index 0))
+           (when (pair? ls)
+             (draw-debug-text (truncate-line (car ls) 42)
+                              (+ x pad)
+                              line-y
+                              (if (= index 0) 16 15)
+                              (if (= index 0) 150 225)
+                              (if (= index 0) 255 235)
+                              (if (= index 0) 195 225)
+                              255)
+             (loop (cdr ls) (+ line-y line-height) (+ index 1))))))
+     (watch-sticker-layouts))))
+
+(define (draw-watch-panel)
+  (when *watch-visible?*
+    (ensure-debug-font!)
+    (let* ((layout (watch-panel-layout))
+           (x (list-ref layout 0))
+           (y (list-ref layout 1))
+           (w (list-ref layout 2))
+           (h (list-ref layout 3))
+           (pad (list-ref layout 4)))
+      (draw-rectangle x y w h 10 12 14 225)
+      (draw-rectangle-lines x y w h 125 225 185 255)
+      (draw-debug-text
+       (format #f "watch - F9 hide - Enter pin - right-click sticker remove - ~A pinned"
+               (length *pinned-watches*))
+       (+ x pad) (+ y pad) 18 150 255 205 255)
+      (draw-debug-text (truncate-line (watch-input-display) 128)
+                       (+ x pad)
+                       (+ y pad 34)
+                       18
+                       225 235 230 255))))
 
 ;; ---------------------------------------------------------------------------
 ;; safe wrappers
@@ -818,11 +1083,16 @@
     (when *last-error* (toggle-error-expanded!))
     (when *last-error* (handle-error-actions! *last-error*))
     (handle-log-actions!)
+    (handle-watch-panel-actions!)
     (safe-call! *on-update*)
+    (update-pinned-watches!)
+    (handle-pinned-watch-actions!)
     (begin-drawing)
     (clear-background (make-color 30 30 40))
     (safe-call! *on-draw*)
+    (draw-pinned-watches)
     (draw-log-overlay)
+    (draw-watch-panel)
     (when *last-error* (draw-error-overlay *last-error*))
     (end-drawing)))
   (thread-yield!))
