@@ -40,6 +40,20 @@ mkdir -p "$BUILD"
 
 log() { printf '\033[1;36m==> %s\033[0m\n' "$*"; }
 
+arch_needs_atomic_libdir() {
+  [ -f /etc/os-release ] || return 1
+  . /etc/os-release
+  case " ${ID:-} ${ID_LIKE:-} " in
+    *" arch "*) [ -e /usr/lib/libatomic_asneeded.a ] ;;
+    *) return 1 ;;
+  esac
+}
+
+if arch_needs_atomic_libdir; then
+  export LIBRARY_PATH="/usr/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+  export LDFLAGS="${LDFLAGS:-} -L/usr/lib"
+fi
+
 # 0. Sanity
 command -v "$CC_MUSL" >/dev/null \
   || { echo "ERROR: $CC_MUSL not found. Run ./configure.sh first."; exit 1; }

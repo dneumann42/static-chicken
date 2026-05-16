@@ -66,9 +66,10 @@ if [ ! -f main.scm ]; then
 
 (set! *on-draw*
       (lambda ()
-        (draw-rectangle 200 150 400 300 240 80 60 255)
-        (draw-text "edit main.scm" 300 100 28 240 240 240 255)
-        (draw-text "REPL: rlwrap nc localhost 1234" 260 470 18 180 180 200 255)))
+        (draw-rectangle 200 150 400 300 color-tomato)
+        (draw-rectangle-lines 200 150 400 300 'raywhite)
+        (draw-text "edit main.scm" 300 100 28 'raywhite)
+        (draw-text "REPL: rlwrap nc localhost 1234" 260 470 18 'lightgray)))
 SCM
 fi
 
@@ -149,8 +150,9 @@ The host reads these environment variables at startup:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `STATIC_CHICKEN_APP_ROOT` | current directory | Root directory for app files |
-| `STATIC_CHICKEN_ENTRY` | `main.scm` | Entry file loaded before watched directories |
+| `STATIC_CHICKEN_ENTRY` | `main.scm` | Entry file loaded after watched source modules |
 | `STATIC_CHICKEN_WATCH_DIRS` | `src:plugins` | Colon-separated directories to hot-load/watch |
+| `STATIC_CHICKEN_DEBUG_FONT` | `vendor/static-chicken/assets/fonts/SpaceMono-Regular.ttf` | TTF used by the runtime error overlay |
 | `REPL_PORT` | `1234` | TCP REPL port on `127.0.0.1` |
 
 `once!` is available for CL-style one-time initialization across reloads:
@@ -163,6 +165,48 @@ The host reads these environment variables at startup:
 ```
 
 Set `*on-draw*` to the thunk the host should call every draw frame.
+
+Runtime load, update, and draw errors are caught by the host. The on-screen
+overlay shows the formatted error, source line when CHICKEN provides one,
+arguments, and a compact hint. Press `F8` while an error is visible to expand or
+collapse the stacktrace. The debug overlay uses the bundled Space Mono Regular
+font from `assets/fonts/SpaceMono-Regular.ttf`; set `STATIC_CHICKEN_DEBUG_FONT`
+to use a different `.ttf`.
+
+Space Mono is distributed under the SIL Open Font License 1.1. The font and its
+license are shipped together in `assets/fonts/`, as required by the OFL when
+redistributing the font with software.
+
+Colors are Scheme records. Drawing helpers accept a color object, a palette
+symbol, an RGB/RGBA list, or the older raw `r g b a` arguments:
+
+```scheme
+(define accent (make-color 240 80 60))
+
+(clear-background color-black)
+(draw-rectangle 200 150 400 300 accent)
+(draw-rectangle-lines 200 150 400 300 'raywhite)
+(draw-text "hello" 260 100 28 'raywhite)
+
+;; Still accepted for compatibility:
+(draw-text "old style" 260 140 18 180 180 200 255)
+```
+
+Common Raylib palette constants are available as `color-red`, `color-blue`,
+`color-raywhite`, etc. The same names are also available as symbols such as
+`'red`, `'blue`, and `'raywhite`.
+
+Additional drawing helpers include:
+
+```scheme
+(draw-pixel x y color)
+(draw-line x1 y1 x2 y2 color)
+(draw-line-ex x1 y1 x2 y2 thickness color)
+(draw-circle x y radius color)
+(draw-circle-lines x y radius color)
+(draw-rectangle-gradient-v x y w h top-color bottom-color)
+(draw-text-ex text x y size spacing color)
+```
 
 Input helpers mirror Raylib's polling API:
 

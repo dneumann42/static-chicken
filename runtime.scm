@@ -12,7 +12,7 @@
 ;; raylib.scm (also baked in). User-facing globals introduced here:
 ;;   *on-update*     thunk run every frame
 ;;   *on-draw*       thunk run every frame
-;;   *last-error*     #f or string
+;;   *last-error*     #f or a runtime-error record
 ;;   once! KEY THUNK  CL-defvar-style idempotent init
 
 (declare (uses raylib))
@@ -23,7 +23,7 @@
         (chicken condition) (chicken format)
         (chicken process-context) (chicken port)
         (chicken string) (chicken sort)
-        (srfi 1) (srfi 18) (srfi 69))
+        (srfi 1) (srfi 9) (srfi 18) (srfi 69))
 
 ;; ---------------------------------------------------------------------------
 ;; user-facing globals
@@ -31,6 +31,8 @@
 (define *on-draw*     (lambda () #f))
 (define *on-update*   (lambda () #f))
 (define *last-error*   #f)
+(define *last-error-text* #f)
+(define *error-expanded?* #f)
 (define *repl-clients* '())
 
 (define *once-keys* (make-hash-table))
@@ -64,6 +66,11 @@
 
 (define *app-entry* (env/default "STATIC_CHICKEN_ENTRY" "main.scm"))
 
+(define *debug-font-path*
+  (env/default "STATIC_CHICKEN_DEBUG_FONT"
+               "vendor/static-chicken/assets/fonts/SpaceMono-Regular.ttf"))
+(define *debug-font-attempted?* #f)
+
 (define *watch-dirs*
   (filter (lambda (s) (not (string=? s "")))
           (string-split (env/default "STATIC_CHICKEN_WATCH_DIRS" "src:plugins")
@@ -73,6 +80,13 @@
   (if (absolute-path? path)
       path
       (path-join *app-root* path)))
+
+(define (ensure-debug-font!)
+  (unless *debug-font-attempted?*
+    (set! *debug-font-attempted?* #t)
+    (let ((path (app-path *debug-font-path*)))
+      (when (file-exists? path)
+        (load-debug-font-ex path 22)))))
 
 (define *repl-host* "127.0.0.1")
 (define *repl-port*
@@ -84,62 +98,184 @@
 ;; ---------------------------------------------------------------------------
 ;; condition formatting
 
+(define-record-type <runtime-error>
+  (make-runtime-error context message location arguments call-chain text)
+  runtime-error?
+  (context runtime-error-context)
+  (message runtime-error-message)
+  (location runtime-error-location)
+  (arguments runtime-error-arguments)
+  (call-chain runtime-error-call-chain)
+  (text runtime-error-text))
+
 (define exn-message
   (condition-property-accessor 'exn 'message #f))
 (define exn-location
   (condition-property-accessor 'exn 'location #f))
 (define exn-arguments
   (condition-property-accessor 'exn 'arguments '()))
+(define exn-call-chain
+  (condition-property-accessor 'exn 'call-chain '()))
 
-(define (condition->string exn)
+(define (->display-string value)
+  (with-output-to-string
+    (lambda () (write value))))
+
+(define (source-location? loc)
+  (and (string? loc)
+       (not (string=? loc "<syntax>"))
+       (not (string=? loc "<eval>"))))
+
+(define (call-chain-location chain)
+  (let loop ((chain chain))
+    (cond
+      ((null? chain) #f)
+      (else
+       (let ((loc (vector-ref (car chain) 0)))
+         (if (source-location? loc)
+             loc
+             (loop (cdr chain))))))))
+
+(define (call-chain-line info)
+  (let ((loc (vector-ref info 0))
+        (expr (vector-ref info 1)))
+    (string-append
+     (if loc (->display-string loc) "<unknown>")
+     "  "
+     (if expr (->display-string expr) ""))))
+
+(define (condition->runtime-error exn context)
   (cond
     ((condition? exn)
-     (let ((msg (or (exn-message exn) "(no message)"))
-           (loc (exn-location exn))
-           (args (exn-arguments exn)))
-       (format #f "~A~A~A"
-               (if loc (format #f "[~A] " loc) "")
-               msg
-               (if (pair? args) (format #f ": ~S" args) ""))))
+     (let* ((msg (or (exn-message exn) "(no message)"))
+            (loc (exn-location exn))
+            (args (exn-arguments exn))
+            (chain (exn-call-chain exn))
+            (source (or (call-chain-location chain)
+                        (and loc (->display-string loc))))
+            (text (format #f "~A~A~A~A"
+                          (if context (format #f "~A: " context) "")
+                          (if source (format #f "~A: " source) "")
+                          msg
+                          (if (pair? args)
+                              (format #f ": ~S" args)
+                              ""))))
+       (make-runtime-error context msg source args chain text)))
     (else
-     (format #f "~A" exn))))
+     (let ((text (format #f "~A~A"
+                         (if context (format #f "~A: " context) "")
+                         exn)))
+       (make-runtime-error context text #f '() '() text)))))
+
+(define (condition->string exn)
+  (runtime-error-text (condition->runtime-error exn #f)))
+
+(define (runtime-error-lines err)
+  (let ((chain (runtime-error-call-chain err))
+        (base
+         (append
+          (list "static-chicken error"
+                (runtime-error-text err))
+          (if (runtime-error-location err)
+              (list (format #f "line: ~A" (runtime-error-location err)))
+              '())
+          (if (pair? (runtime-error-arguments err))
+              (list (format #f "arguments: ~S" (runtime-error-arguments err)))
+              '()))))
+    (if *error-expanded?*
+        (append
+         base
+         (if (pair? chain)
+             (cons "stacktrace:"
+                   (map call-chain-line (take chain (min 18 (length chain)))))
+             (list "stacktrace unavailable")))
+        base)))
 
 ;; ---------------------------------------------------------------------------
+(define (coerce-runtime-error value)
+  (cond
+    ((runtime-error? value) value)
+    ((condition? value) (condition->runtime-error value #f))
+    (else (make-runtime-error #f (format #f "~A" value) #f '() '()
+                              (format #f "~A" value)))))
+
 ;; error broadcast (overlay + stderr + every REPL client)
 
-(define (broadcast-error! str)
-  (set! *last-error* str)
+(define (broadcast-error! err)
+  (let* ((err (coerce-runtime-error err))
+         (str (runtime-error-text err))
+         (new? (not (and *last-error-text*
+                         (string=? *last-error-text* str)))))
+    (set! *last-error* err)
+    (set! *last-error-text* str)
   ;; stderr
-  (with-output-to-port (current-error-port)
-    (lambda () (print "[error] " str)))
+    (when new?
+      (with-output-to-port (current-error-port)
+        (lambda () (print "[error] " str))))
   ;; REPL clients — drop dead ones
-  (set! *repl-clients*
-        (filter
-         (lambda (out)
-           (handle-exceptions _ #f
-             (begin
-               (display "[error] " out)
-               (display str out)
-               (newline out)
-               (flush-output out)
-               #t)))
-         *repl-clients*)))
+    (when new?
+      (set! *repl-clients*
+            (filter
+             (lambda (out)
+               (handle-exceptions _ #f
+                 (begin
+                   (display "[error] " out)
+                   (display str out)
+                   (newline out)
+                   (flush-output out)
+                   #t)))
+             *repl-clients*)))))
 
-(define (clear-error!) (set! *last-error* #f))
+(define (clear-error!)
+  (set! *last-error* #f)
+  (set! *last-error-text* #f))
 
 ;; ---------------------------------------------------------------------------
 ;; safe wrappers
 
 (define (safe-call! thunk)
   (handle-exceptions exn
-    (broadcast-error! (condition->string exn))
+    (broadcast-error! (condition->runtime-error exn #f))
     (thunk)))
 
-(define (safe-load! path)
+(define (try-load path)
   (handle-exceptions exn
-    (broadcast-error! (format #f "load ~A: ~A" path (condition->string exn)))
+    (cons #f (condition->runtime-error exn (format #f "load ~A" path)))
     (load path)
-    (clear-error!)))
+    (cons #t #f)))
+
+(define (safe-load! path)
+  (let ((result (try-load path)))
+    (if (car result)
+        (clear-error!)
+        (broadcast-error! (cdr result)))))
+
+(define (load-files! paths)
+  (let loop ((pending paths) (last-errors '()))
+    (cond
+      ((null? pending)
+       (clear-error!))
+      (else
+       (let pass ((rest pending)
+                  (next '())
+                  (errors '())
+                  (loaded? #f))
+         (cond
+           ((null? rest)
+            (cond
+              (loaded?
+               (loop (reverse next) errors))
+              (else
+               (for-each broadcast-error! (reverse errors)))))
+           (else
+            (let* ((path (car rest))
+                   (result (try-load path)))
+              (if (car result)
+                  (pass (cdr rest) next errors #t)
+                  (pass (cdr rest)
+                        (cons path next)
+                        (cons (cdr result) errors)
+                        loaded?))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; file watcher
@@ -153,9 +289,8 @@
       (and (>= lp ls)
            (string=? (substring p (- lp ls) lp) suf)))))
 
-(define (enumerate-watch-files)
-  (let* ((entry (app-path *app-entry*))
-         (files (if (file-exists? entry) (list entry) '())))
+(define (enumerate-source-files)
+  (let ((files '()))
     (for-each
      (lambda (dir)
        (let ((rooted-dir (app-path dir)))
@@ -165,34 +300,91 @@
      *watch-dirs*)
     (sort (delete-duplicates files string=?) string<?)))
 
+(define (enumerate-watch-files)
+  (let ((entry (app-path *app-entry*)))
+    (append
+     (enumerate-source-files)
+     (if (file-exists? entry) (list entry) '()))))
+
 (define (file-mtime-or-zero path)
   (handle-exceptions _ 0 (file-modification-time path)))
 
 (define (check-watches!)
-  (for-each
-   (lambda (path)
-     (let ((cur  (file-mtime-or-zero path))
-           (prev (hash-table-ref/default *watch-mtimes* path 0)))
-       (when (and (> cur 0) (not (= cur prev)))
-         (hash-table-set! *watch-mtimes* path cur)
-         (when (> prev 0)
-           (print "[reload] " path)
-           (flush-output))
-         (safe-load! path))))
-   (enumerate-watch-files)))
+  (let ((changed '()))
+    (for-each
+     (lambda (path)
+       (let ((cur  (file-mtime-or-zero path))
+             (prev (hash-table-ref/default *watch-mtimes* path 0)))
+         (when (and (> cur 0) (not (= cur prev)))
+           (hash-table-set! *watch-mtimes* path cur)
+           (when (> prev 0)
+             (print "[reload] " path)
+             (flush-output))
+           (set! changed (cons path changed)))))
+     (enumerate-watch-files))
+    (unless (null? changed)
+      (load-files! (reverse changed)))))
 
 ;; ---------------------------------------------------------------------------
 ;; on-screen error overlay
 
-(define (split-lines s)
-  (string-split s "\n" #t))
+(define (truncate-line s limit)
+  (if (> (string-length s) limit)
+      (string-append (substring s 0 (max 0 (- limit 1))) "...")
+      s))
 
-(define (draw-error-overlay msg)
-  (let line-loop ((ls (split-lines msg)) (y 8))
-    (when (pair? ls)
-      (draw-rectangle 0 y 4096 22 0 0 0 200)
-      (draw-text (car ls) 8 (+ y 2) 18 255 90 90 255)
-      (line-loop (cdr ls) (+ y 22)))))
+(define (wrap-line s limit)
+  (let loop ((remaining s) (out '()))
+    (if (<= (string-length remaining) limit)
+        (reverse (cons remaining out))
+        (let scan ((i limit))
+          (cond
+            ((<= i 20)
+             (loop (substring remaining limit (string-length remaining))
+                   (cons (substring remaining 0 limit) out)))
+            ((char-whitespace? (string-ref remaining i))
+             (loop (substring remaining (+ i 1) (string-length remaining))
+                   (cons (substring remaining 0 i) out)))
+            (else
+             (scan (- i 1))))))))
+
+(define (overlay-lines err)
+  (append-map (lambda (line) (wrap-line line 96))
+              (runtime-error-lines err)))
+
+(define (toggle-error-expanded!)
+  (when (key-pressed? key-f8)
+    (set! *error-expanded?* (not *error-expanded?*))))
+
+(define (draw-error-overlay err)
+  (ensure-debug-font!)
+  (let* ((lines (overlay-lines err))
+         (visible (take lines (min (length lines) (if *error-expanded?* 22 8))))
+         (line-height 25)
+         (pad 12)
+         (panel-width (min (- (get-screen-width) 16) 1120))
+         (panel-height (+ (* line-height (length visible)) (* pad 2) 22))
+         (x 8)
+         (y 8))
+    (draw-rectangle x y panel-width panel-height 12 12 16 225)
+    (draw-rectangle-lines x y panel-width panel-height 255 90 90 255)
+    (draw-debug-text (if *error-expanded?*
+                         "error - F8 collapse"
+                         "error - F8 expand")
+                     (+ x pad) (+ y pad) 20 255 120 120 255)
+    (let loop ((ls visible)
+               (line-y (+ y pad 24))
+               (index 0))
+      (when (pair? ls)
+        (draw-debug-text (truncate-line (car ls) 120)
+                         (+ x pad)
+                         line-y
+                         (if (= index 0) 20 18)
+                         (if (= index 0) 255 220)
+                         (if (= index 0) 190 210)
+                         (if (= index 0) 190 220)
+                         255)
+        (loop (cdr ls) (+ line-y line-height) (+ index 1))))))
 
 ;; ---------------------------------------------------------------------------
 ;; TCP REPL
@@ -311,9 +503,10 @@
    ((window-should-close?)
     #f)
    (else
+    (when *last-error* (toggle-error-expanded!))
     (safe-call! *on-update*)
     (begin-drawing)
-    (clear-background 30 30 40 255)
+    (clear-background (make-color 30 30 40))
     (safe-call! *on-draw*)
     (when *last-error* (draw-error-overlay *last-error*))
     (end-drawing)))
