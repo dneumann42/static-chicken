@@ -169,9 +169,12 @@ Set `*on-draw*` to the thunk the host should call every draw frame.
 Runtime load, update, and draw errors are caught by the host. The on-screen
 overlay shows the formatted error, source line when CHICKEN provides one,
 arguments, and a compact hint. Press `F8` while an error is visible to expand or
-collapse the stacktrace. The debug overlay uses the bundled Space Mono Regular
-font from `assets/fonts/SpaceMono-Regular.ttf`; set `STATIC_CHICKEN_DEBUG_FONT`
-to use a different `.ttf`.
+collapse the stacktrace. Press `F11`, or click anywhere in the error panel, to
+open the reported source line in a running Emacs server via `emacsclient -n`.
+
+The debug overlay uses the bundled Space Mono Regular font from
+`assets/fonts/SpaceMono-Regular.ttf`; set `STATIC_CHICKEN_DEBUG_FONT` to use a
+different `.ttf`.
 
 Space Mono is distributed under the SIL Open Font License 1.1. The font and its
 license are shipped together in `assets/fonts/`, as required by the OFL when

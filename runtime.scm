@@ -21,7 +21,7 @@
         (chicken file) (chicken file.posix)
         (chicken tcp)
         (chicken condition) (chicken format)
-        (chicken process-context) (chicken port)
+        (chicken process) (chicken process-context) (chicken port)
         (chicken string) (chicken sort)
         (srfi 1) (srfi 9) (srfi 18) (srfi 69))
 
@@ -352,38 +352,203 @@
   (append-map (lambda (line) (wrap-line line 96))
               (runtime-error-lines err)))
 
-(define (toggle-error-expanded!)
-  (when (key-pressed? key-f8)
-    (set! *error-expanded?* (not *error-expanded?*))))
-
-(define (draw-error-overlay err)
-  (ensure-debug-font!)
+(define (error-panel-layout err)
   (let* ((lines (overlay-lines err))
          (visible (take lines (min (length lines) (if *error-expanded?* 22 8))))
          (line-height 25)
          (pad 12)
          (panel-width (min (- (get-screen-width) 16) 1120))
-         (panel-height (+ (* line-height (length visible)) (* pad 2) 22))
-         (x 8)
-         (y 8))
+         (panel-height (+ (* line-height (length visible)) (* pad 2) 22)))
+    (list 8 8 panel-width panel-height visible line-height pad)))
+
+(define (toggle-error-expanded!)
+  (when (key-pressed? key-f8)
+    (set! *error-expanded?* (not *error-expanded?*))))
+
+(define (string-last-colon s)
+  (string-last-colon-before s (string-length s)))
+
+(define (string-last-colon-before s end)
+  (let loop ((index (- end 1)))
+    (cond
+      ((< index 0) #f)
+      ((char=? (string-ref s index) #\:) index)
+      (else (loop (- index 1))))))
+
+(define (digit-string? s)
+  (and (> (string-length s) 0)
+       (let loop ((index 0))
+         (cond
+           ((= index (string-length s)) #t)
+           ((char-numeric? (string-ref s index))
+            (loop (+ index 1)))
+           (else #f)))))
+
+(define (string-prefix? prefix s)
+  (and (>= (string-length s) (string-length prefix))
+       (string=? (substring s 0 (string-length prefix)) prefix)))
+
+(define (parse-error-location loc)
+  (and (string? loc)
+       (let* ((last-colon (string-last-colon loc))
+              (prev-colon (and last-colon
+                               (string-last-colon-before loc last-colon)))
+              (last-part (and last-colon
+                              (substring loc (+ last-colon 1)
+                                         (string-length loc))))
+              (prev-part (and prev-colon last-colon
+                              (substring loc (+ prev-colon 1) last-colon)))
+              (colon (if (and prev-colon
+                              (digit-string? prev-part)
+                              (digit-string? last-part))
+                         prev-colon
+                         last-colon))
+              (column (and (eq? colon prev-colon)
+                           (string->number last-part))))
+         (and colon
+              (let ((path (substring loc 0 colon))
+                    (line (if (eq? colon prev-colon)
+                              prev-part
+                              (substring loc (+ colon 1)
+                                         (string-length loc)))))
+                (and (not (string=? path ""))
+                     (not (string=? path "<stdin>"))
+                     (not (string=? path "<eval>"))
+                     (digit-string? line)
+                     (list (app-path path)
+                           (string->number line)
+                           column)))))))
+
+(define (quoted-prefix s)
+  (and (> (string-length s) 1)
+       (char=? (string-ref s 0) #\")
+       (let loop ((index 1))
+         (cond
+           ((= index (string-length s)) #f)
+           ((char=? (string-ref s index) #\")
+            (substring s 1 index))
+           (else
+            (loop (+ index 1)))))))
+
+(define (panel-line-location line)
+  (cond
+    ((string-prefix? "line: " line)
+     (parse-error-location (substring line 6 (string-length line))))
+    ((quoted-prefix line) => parse-error-location)
+    (else #f)))
+
+(define (executable-on-path command)
+  (let ((path (get-environment-variable "PATH")))
+    (and path
+         (let loop ((dirs (string-split path ":")))
+           (cond
+             ((null? dirs) #f)
+             (else
+              (let ((candidate (path-join (car dirs) command)))
+                (if (and (file-exists? candidate)
+                         (not (directory? candidate)))
+                    candidate
+                    (loop (cdr dirs))))))))))
+
+(define (open-target-location! target)
+  (when target
+    (let* ((file (list-ref target 0))
+           (line (list-ref target 1))
+           (column (list-ref target 2))
+           (line-arg (format #f "+~A~A"
+                             line
+                             (if column (format #f ":~A" column) "")))
+           (emacsclient (executable-on-path "emacsclient")))
+      (handle-exceptions exn
+        (broadcast-error! (condition->runtime-error exn "open editor"))
+        (if emacsclient
+            (process-run emacsclient (list "-n" line-arg file))
+            (broadcast-error!
+             "open editor: emacsclient not found on PATH"))))))
+
+(define (open-error-location! err line)
+  (let ((target (or (and line (panel-line-location line))
+                    (parse-error-location (runtime-error-location err)))))
+    (when target
+      (open-target-location! target))))
+
+(define (point-in-rect? px py x y w h)
+  (and (>= px x)
+       (< px (+ x w))
+       (>= py y)
+       (< py (+ y h))))
+
+(define (error-panel-clicked? layout)
+  (and (mouse-button-pressed? mouse-button-left)
+       (point-in-rect? (get-mouse-x) (get-mouse-y)
+                       (list-ref layout 0)
+                       (list-ref layout 1)
+                       (list-ref layout 2)
+                       (list-ref layout 3))))
+
+(define (hovered-error-line-index layout)
+  (let* ((mx (get-mouse-x))
+         (my (get-mouse-y))
+         (x (list-ref layout 0))
+         (y (list-ref layout 1))
+         (w (list-ref layout 2))
+         (visible (list-ref layout 4))
+         (line-height (list-ref layout 5))
+         (pad (list-ref layout 6))
+         (line-top (+ y pad 24))
+         (line-index (quotient (- my line-top) line-height)))
+    (and (>= mx (+ x pad))
+         (< mx (+ x w (- pad)))
+         (>= line-index 0)
+         (< line-index (length visible))
+         line-index)))
+
+(define (handle-error-actions! err)
+  (let* ((layout (error-panel-layout err))
+         (visible (list-ref layout 4))
+         (hovered-line-index (hovered-error-line-index layout))
+         (hovered-line (and hovered-line-index
+                            (list-ref visible hovered-line-index))))
+    (cond
+      ((key-pressed? key-f11)
+       (open-error-location! err #f))
+      ((error-panel-clicked? layout)
+       (open-error-location! err hovered-line)))))
+
+(define (draw-error-overlay err)
+  (ensure-debug-font!)
+  (let* ((layout (error-panel-layout err))
+         (x (list-ref layout 0))
+         (y (list-ref layout 1))
+         (panel-width (list-ref layout 2))
+         (panel-height (list-ref layout 3))
+         (visible (list-ref layout 4))
+         (line-height (list-ref layout 5))
+         (pad (list-ref layout 6))
+         (hovered-line (hovered-error-line-index layout)))
     (draw-rectangle x y panel-width panel-height 12 12 16 225)
     (draw-rectangle-lines x y panel-width panel-height 255 90 90 255)
     (draw-debug-text (if *error-expanded?*
-                         "error - F8 collapse"
-                         "error - F8 expand")
+                         "error - F8 collapse - F11/click open"
+                         "error - F8 expand - F11/click open")
                      (+ x pad) (+ y pad) 20 255 120 120 255)
     (let loop ((ls visible)
                (line-y (+ y pad 24))
                (index 0))
       (when (pair? ls)
-        (draw-debug-text (truncate-line (car ls) 120)
-                         (+ x pad)
-                         line-y
-                         (if (= index 0) 20 18)
-                         (if (= index 0) 255 220)
-                         (if (= index 0) 190 210)
-                         (if (= index 0) 190 220)
-                         255)
+        (let* ((text (truncate-line (car ls) 120))
+               (font-size (if (= index 0) 20 18))
+               (r (if (= index 0) 255 220))
+               (g (if (= index 0) 190 210))
+               (b (if (= index 0) 190 220))
+               (text-x (+ x pad)))
+          (draw-debug-text text text-x line-y font-size r g b 255)
+          (when (and hovered-line (= hovered-line index))
+            (draw-line text-x
+                       (+ line-y font-size 3)
+                       (+ text-x (measure-text text font-size))
+                       (+ line-y font-size 3)
+                       r g b 255)))
         (loop (cdr ls) (+ line-y line-height) (+ index 1))))))
 
 ;; ---------------------------------------------------------------------------
@@ -504,6 +669,7 @@
     #f)
    (else
     (when *last-error* (toggle-error-expanded!))
+    (when *last-error* (handle-error-actions! *last-error*))
     (safe-call! *on-update*)
     (begin-drawing)
     (clear-background (make-color 30 30 40))
