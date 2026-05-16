@@ -34,6 +34,12 @@
 (define *last-error-text* #f)
 (define *error-expanded?* #f)
 (define *repl-clients* '())
+(define *stdout-port* (current-output-port))
+(define *stdout-log-installed?* #f)
+(define *log-lines* '())
+(define *log-partial* "")
+(define *log-visible?* #f)
+(define *log-scroll* 0)
 
 (define *once-keys* (make-hash-table))
 (define (once! key thunk)
@@ -70,6 +76,12 @@
   (env/default "STATIC_CHICKEN_DEBUG_FONT"
                "vendor/static-chicken/assets/fonts/SpaceMono-Regular.ttf"))
 (define *debug-font-attempted?* #f)
+
+(define *log-max-lines*
+  (or (and-let* ((s (get-environment-variable "STATIC_CHICKEN_LOG_LINES"))
+                 (n (string->number s)))
+        n)
+      200))
 
 (define *watch-dirs*
   (filter (lambda (s) (not (string=? s "")))
@@ -231,6 +243,47 @@
   (set! *last-error-text* #f))
 
 ;; ---------------------------------------------------------------------------
+;; stdout log capture
+
+(define (trim-log-lines lines)
+  (let ((count (length lines)))
+    (if (> count *log-max-lines*)
+        (drop lines (- count *log-max-lines*))
+        lines)))
+
+(define (append-log-line! line)
+  (set! *log-lines* (trim-log-lines (append *log-lines* (list line))))
+  (set! *log-scroll* (min *log-scroll* (max 0 (- (length *log-lines*) 1)))))
+
+(define (capture-log-text! text)
+  (let loop ((chars (string->list text)))
+    (cond
+      ((null? chars) #f)
+      ((char=? (car chars) #\newline)
+       (append-log-line! *log-partial*)
+       (set! *log-partial* "")
+       (loop (cdr chars)))
+      (else
+       (set! *log-partial*
+             (string-append *log-partial* (string (car chars))))
+       (loop (cdr chars))))))
+
+(define (stdout-log-write text)
+  (display text *stdout-port*)
+  (capture-log-text! text))
+
+(define (stdout-log-flush)
+  (flush-output *stdout-port*))
+
+(define (install-stdout-log!)
+  (unless *stdout-log-installed?*
+    (set! *stdout-log-installed?* #t)
+    (current-output-port
+     (make-output-port stdout-log-write
+                       (lambda () (flush-output *stdout-port*))
+                       stdout-log-flush))))
+
+;; ---------------------------------------------------------------------------
 ;; safe wrappers
 
 (define (safe-call! thunk)
@@ -347,6 +400,12 @@
                    (cons (substring remaining 0 i) out)))
             (else
              (scan (- i 1))))))))
+
+(define (clamp n low high)
+  (cond
+    ((< n low) low)
+    ((> n high) high)
+    (else n)))
 
 (define (overlay-lines err)
   (append-map (lambda (line) (wrap-line line 96))
@@ -551,6 +610,94 @@
                        r g b 255)))
         (loop (cdr ls) (+ line-y line-height) (+ index 1))))))
 
+(define (log-source-lines)
+  (if (string=? *log-partial* "")
+      *log-lines*
+      (append *log-lines* (list *log-partial*))))
+
+(define (log-wrapped-lines)
+  (append-map (lambda (line) (wrap-line line 110))
+              (log-source-lines)))
+
+(define (log-panel-layout)
+  (let* ((line-height 22)
+         (pad 12)
+         (header-height 28)
+         (panel-width (min (- (get-screen-width) 16) 1120))
+         (max-body-height (max 90 (- (get-screen-height) 180)))
+         (panel-height (min 340 max-body-height))
+         (visible-count (max 1
+                             (quotient (- panel-height
+                                          header-height
+                                          (* pad 2))
+                                       line-height)))
+         (x 8)
+         (y (- (get-screen-height) panel-height 8)))
+    (list x y panel-width panel-height visible-count line-height pad header-height)))
+
+(define (visible-log-lines layout)
+  (let* ((lines (log-wrapped-lines))
+         (visible-count (list-ref layout 4))
+         (total (length lines))
+         (max-scroll (max 0 (- total visible-count))))
+    (set! *log-scroll* (clamp *log-scroll* 0 max-scroll))
+    (let* ((start (max 0 (- total visible-count *log-scroll*)))
+           (end (min total (+ start visible-count))))
+      (take (drop lines start) (- end start)))))
+
+(define (toggle-log-panel!)
+  (when (key-pressed? key-f10)
+    (set! *log-visible?* (not *log-visible?*))))
+
+(define (scroll-log! delta layout)
+  (let* ((lines (log-wrapped-lines))
+         (visible-count (list-ref layout 4))
+         (max-scroll (max 0 (- (length lines) visible-count))))
+    (set! *log-scroll*
+          (clamp (+ *log-scroll* delta) 0 max-scroll))))
+
+(define (handle-log-actions!)
+  (toggle-log-panel!)
+  (when *log-visible?*
+    (let ((layout (log-panel-layout))
+          (wheel (get-mouse-wheel-move)))
+      (cond
+        ((> wheel 0.0) (scroll-log! 3 layout))
+        ((< wheel 0.0) (scroll-log! -3 layout)))
+      (cond
+        ((key-pressed? key-page-up) (scroll-log! 8 layout))
+        ((key-pressed? key-page-down) (scroll-log! -8 layout))))))
+
+(define (draw-log-overlay)
+  (when *log-visible?*
+    (ensure-debug-font!)
+    (let* ((layout (log-panel-layout))
+           (x (list-ref layout 0))
+           (y (list-ref layout 1))
+           (panel-width (list-ref layout 2))
+           (panel-height (list-ref layout 3))
+           (line-height (list-ref layout 5))
+           (pad (list-ref layout 6))
+           (header-height (list-ref layout 7))
+           (lines (visible-log-lines layout))
+           (total (length (log-wrapped-lines))))
+      (draw-rectangle x y panel-width panel-height 10 12 14 225)
+      (draw-rectangle-lines x y panel-width panel-height 105 170 230 255)
+      (draw-debug-text
+       (format #f "stdout - F10 hide - wheel/PageUp/PageDown scroll - ~A/~A lines"
+               (length *log-lines*)
+               *log-max-lines*)
+       (+ x pad) (+ y pad) 18 150 205 255 255)
+      (let loop ((ls lines)
+                 (line-y (+ y pad header-height)))
+        (when (pair? ls)
+          (draw-debug-text (truncate-line (car ls) 132)
+                           (+ x pad)
+                           line-y
+                           16
+                           220 230 235 255)
+          (loop (cdr ls) (+ line-y line-height)))))))
+
 ;; ---------------------------------------------------------------------------
 ;; TCP REPL
 
@@ -670,15 +817,18 @@
    (else
     (when *last-error* (toggle-error-expanded!))
     (when *last-error* (handle-error-actions! *last-error*))
+    (handle-log-actions!)
     (safe-call! *on-update*)
     (begin-drawing)
     (clear-background (make-color 30 30 40))
     (safe-call! *on-draw*)
+    (draw-log-overlay)
     (when *last-error* (draw-error-overlay *last-error*))
     (end-drawing)))
   (thread-yield!))
 
 (define (main)
+  (install-stdout-log!)
   (start-repl-server!)
   (install-helper-syntax!)
   (check-watches!)

@@ -153,6 +153,7 @@ The host reads these environment variables at startup:
 | `STATIC_CHICKEN_ENTRY` | `main.scm` | Entry file loaded after watched source modules |
 | `STATIC_CHICKEN_WATCH_DIRS` | `src:plugins` | Colon-separated directories to hot-load/watch |
 | `STATIC_CHICKEN_DEBUG_FONT` | `vendor/static-chicken/assets/fonts/SpaceMono-Regular.ttf` | TTF used by the runtime error overlay |
+| `STATIC_CHICKEN_LOG_LINES` | `200` | Maximum stdout lines kept in the in-game log panel |
 | `REPL_PORT` | `1234` | TCP REPL port on `127.0.0.1` |
 
 `once!` is available for CL-style one-time initialization across reloads:
@@ -175,6 +176,10 @@ open the reported source line in a running Emacs server via `emacsclient -n`.
 The debug overlay uses the bundled Space Mono Regular font from
 `assets/fonts/SpaceMono-Regular.ttf`; set `STATIC_CHICKEN_DEBUG_FONT` to use a
 different `.ttf`.
+
+Stdout is tee'd to the terminal and to an in-game log panel. Press `F10` to show
+or hide the log panel; use the mouse wheel or `PageUp` / `PageDown` to scroll.
+The panel keeps the last `STATIC_CHICKEN_LOG_LINES` lines.
 
 Space Mono is distributed under the SIL Open Font License 1.1. The font and its
 license are shipped together in `assets/fonts/`, as required by the OFL when
