@@ -94,6 +94,13 @@
           (string-split (env/default "STATIC_CHICKEN_WATCH_DIRS" "src:plugins")
                         ":")))
 
+(define *watch-enabled?*
+  (let ((value (get-environment-variable "STATIC_CHICKEN_WATCH")))
+    (and value
+         (not (string=? value ""))
+         (not (string=? value "0"))
+         (not (string=? value "false")))))
+
 (define (app-path path)
   (if (absolute-path? path)
       path
@@ -568,37 +575,208 @@
         (clear-error!)
         (broadcast-error! (cdr result)))))
 
-(define (load-files! paths)
-  (let loop ((pending paths) (last-errors '()))
+(define (topo-sort paths)
+  ;; Order files so every module loads after the files that define modules
+  ;; it imports. Ties broken by filename for determinism. On cycle, emit a
+  ;; warning and append the SCC in filename order.
+  (let* ((specs (map ensure-module-spec paths))
+         (path-set (make-hash-table equal?))
+         (name->path (make-hash-table eq?))
+         (deps (make-hash-table equal?))
+         (succ (make-hash-table equal?))
+         (indeg (make-hash-table equal?)))
+    (for-each (lambda (p) (hash-table-set! path-set p #t)) paths)
+    (for-each
+     (lambda (s)
+       (for-each
+        (lambda (name)
+          (hash-table-set! name->path name (module-spec-path s)))
+        (module-spec-defines s)))
+     specs)
+    (for-each
+     (lambda (s)
+       (let* ((self (module-spec-path s))
+              (ds (filter
+                   (lambda (p)
+                     (and p
+                          (not (string=? p self))
+                          (hash-table-exists? path-set p)))
+                   (map (lambda (n) (hash-table-ref/default name->path n #f))
+                        (module-spec-imports s)))))
+         (hash-table-set! deps self (delete-duplicates ds string=?))))
+     specs)
+    (for-each
+     (lambda (p)
+       (hash-table-set! indeg p 0)
+       (hash-table-set! succ p '()))
+     paths)
+    (for-each
+     (lambda (p)
+       (for-each
+        (lambda (d)
+          (hash-table-set! succ d (cons p (hash-table-ref/default succ d '())))
+          (hash-table-set! indeg p (+ 1 (hash-table-ref/default indeg p 0))))
+        (hash-table-ref/default deps p '())))
+     paths)
+    (let loop ((ready (sort (filter (lambda (p) (= 0 (hash-table-ref indeg p))) paths)
+                            string<?))
+               (out '()))
+      (cond
+        ((null? ready)
+         (let ((leftover (filter (lambda (p) (> (hash-table-ref indeg p) 0)) paths)))
+           (when (pair? leftover)
+             (print "[warn] import cycle among: " (sort leftover string<?))
+             (flush-output))
+           (append (reverse out) (sort leftover string<?))))
+        (else
+         (let* ((p (car ready)))
+           (for-each
+            (lambda (s)
+              (hash-table-set! indeg s (- (hash-table-ref indeg s) 1)))
+            (hash-table-ref/default succ p '()))
+           (let ((freed
+                  (filter (lambda (s) (= 0 (hash-table-ref indeg s)))
+                          (hash-table-ref/default succ p '()))))
+             (loop (sort (append freed (cdr ready)) string<?)
+                   (cons p out)))))))))
+
+(define (expand-dependents changed)
+  ;; Given a list of changed paths, return them plus every path whose
+  ;; module transitively imports a module defined by something in that
+  ;; list (over the full watch set).
+  (let* ((all (enumerate-watch-files))
+         (specs (map ensure-module-spec all))
+         (path-set (make-hash-table equal?))
+         (name->path (make-hash-table eq?))
+         (rev (make-hash-table equal?))
+         (visited (make-hash-table equal?)))
+    (for-each (lambda (p) (hash-table-set! path-set p #t)) all)
+    (for-each
+     (lambda (s)
+       (for-each
+        (lambda (name)
+          (hash-table-set! name->path name (module-spec-path s)))
+        (module-spec-defines s)))
+     specs)
+    (for-each
+     (lambda (s)
+       (let ((f (module-spec-path s)))
+         (for-each
+          (lambda (name)
+            (let ((g (hash-table-ref/default name->path name #f)))
+              (when (and g (not (string=? g f)) (hash-table-exists? path-set g))
+                (hash-table-set! rev g
+                                 (cons f (hash-table-ref/default rev g '()))))))
+          (module-spec-imports s))))
+     specs)
+    (let loop ((stack changed))
+      (cond
+        ((null? stack) #f)
+        ((hash-table-exists? visited (car stack))
+         (loop (cdr stack)))
+        (else
+         (hash-table-set! visited (car stack) #t)
+         (loop (append (hash-table-ref/default rev (car stack) '())
+                       (cdr stack))))))
+    (hash-table-keys visited)))
+
+(define (load-in-order! paths announce-reload?)
+  (let ((ordered (topo-sort paths)))
+    (clear-error!)
+    (for-each
+     (lambda (path)
+       (when announce-reload?
+         (print "[reload] " path)
+         (flush-output))
+       (let ((result (try-load path)))
+         (unless (car result)
+           (broadcast-error! (cdr result)))))
+     ordered)))
+
+;; ---------------------------------------------------------------------------
+;; module-spec scanner — parses each .scm file's top-level forms to extract
+;; the (module NAME …) declarations and (import …) clauses so the loader
+;; can compute a dependency graph and load files in topological order.
+
+(define-record-type <module-spec>
+  (make-module-spec path defines imports)
+  module-spec?
+  (path module-spec-path)
+  (defines module-spec-defines)
+  (imports module-spec-imports))
+
+(define *module-specs* (make-hash-table equal?))
+
+(define (read-all-forms path)
+  (handle-exceptions _ '()
+    (call-with-input-file path
+      (lambda (port)
+        (let loop ((acc '()))
+          (let ((form (handle-exceptions _ #!eof (read port))))
+            (if (eof-object? form)
+                (reverse acc)
+                (loop (cons form acc)))))))))
+
+(define (import-clause-name spec acc)
+  (cond
+    ((symbol? spec) (cons spec acc))
+    ((and (pair? spec)
+          (pair? (cdr spec))
+          (memq (car spec) '(only except prefix rename)))
+     (import-clause-name (cadr spec) acc))
+    (else acc)))
+
+(define (collect-imports-in body acc)
+  (let loop ((forms body) (acc acc))
     (cond
-      ((null? pending)
-       (clear-error!))
+      ((null? forms) acc)
+      ((not (pair? forms)) acc)
       (else
-       (let pass ((rest pending)
-                  (next '())
-                  (errors '())
-                  (loaded? #f))
+       (let ((form (car forms)))
          (cond
-           ((null? rest)
-            (cond
-              (loaded?
-               (loop (reverse next) errors))
-              (else
-               (for-each broadcast-error! (reverse errors)))))
-           (else
-            (let* ((path (car rest))
-                   (result (try-load path)))
-              (if (car result)
-                  (pass (cdr rest) next errors #t)
-                  (pass (cdr rest)
-                        (cons path next)
-                        (cons (cdr result) errors)
-                        loaded?))))))))))
+           ((and (pair? form) (eq? (car form) 'import))
+            (loop (cdr forms) (fold import-clause-name acc (cdr form))))
+           ((and (pair? form)
+                 (memq (car form) '(module begin cond-expand)))
+            (loop (cdr forms) (collect-imports-in (cdr form) acc)))
+           (else (loop (cdr forms) acc))))))))
+
+(define (collect-defines-in forms)
+  (let loop ((forms forms) (acc '()))
+    (cond
+      ((null? forms) (reverse acc))
+      ((and (pair? (car forms))
+            (eq? (caar forms) 'module)
+            (pair? (cdar forms))
+            (symbol? (cadar forms)))
+       (loop (cdr forms) (cons (cadar forms) acc)))
+      ((and (pair? (car forms))
+            (memq (caar forms) '(begin cond-expand)))
+       (loop (cdr forms) (append (reverse (collect-defines-in (cdar forms))) acc)))
+      (else (loop (cdr forms) acc)))))
+
+(define (scan-module-spec path)
+  (let ((forms (read-all-forms path)))
+    (make-module-spec path
+                      (collect-defines-in forms)
+                      (reverse (collect-imports-in forms '())))))
+
+(define (ensure-module-spec path)
+  (let* ((cur (file-mtime-or-zero path))
+         (cached (hash-table-ref/default *module-specs* path #f)))
+    (cond
+      ((and cached (= cur (vector-ref cached 0)))
+       (vector-ref cached 1))
+      (else
+       (let ((spec (scan-module-spec path)))
+         (hash-table-set! *module-specs* path (vector cur spec))
+         spec)))))
 
 ;; ---------------------------------------------------------------------------
 ;; file watcher
 
 (define *watch-mtimes* (make-hash-table equal?))
+(define *loaded-once?* #f)
 
 (define (scm-file? path)
   (let ((p (if (string? path) path (->string path)))
@@ -628,20 +806,27 @@
   (handle-exceptions _ 0 (file-modification-time path)))
 
 (define (check-watches!)
-  (let ((changed '()))
-    (for-each
-     (lambda (path)
-       (let ((cur  (file-mtime-or-zero path))
-             (prev (hash-table-ref/default *watch-mtimes* path 0)))
-         (when (and (> cur 0) (not (= cur prev)))
-           (hash-table-set! *watch-mtimes* path cur)
-           (when (> prev 0)
-             (print "[reload] " path)
-             (flush-output))
-           (set! changed (cons path changed)))))
-     (enumerate-watch-files))
-    (unless (null? changed)
-      (load-files! (reverse changed)))))
+  (cond
+    ((not *loaded-once?*)
+     (let ((all (enumerate-watch-files)))
+       (for-each
+        (lambda (path)
+          (hash-table-set! *watch-mtimes* path (file-mtime-or-zero path)))
+        all)
+       (load-in-order! all #f)
+       (set! *loaded-once?* #t)))
+    (else
+     (let ((changed '()))
+       (for-each
+        (lambda (path)
+          (let ((cur  (file-mtime-or-zero path))
+                (prev (hash-table-ref/default *watch-mtimes* path 0)))
+            (when (and (> cur 0) (not (= cur prev)))
+              (hash-table-set! *watch-mtimes* path cur)
+              (set! changed (cons path changed)))))
+        (enumerate-watch-files))
+       (unless (null? changed)
+         (load-in-order! (expand-dependents changed) #t))))))
 
 ;; ---------------------------------------------------------------------------
 ;; on-screen error overlay
@@ -1001,32 +1186,55 @@
   (set! *repl-clients*
         (filter (lambda (p) (not (eq? p out))) *repl-clients*)))
 
+(define (drop-conn-fully! in out)
+  (drop-conn! out)
+  (handle-exceptions _ #f (close-input-port in))
+  (handle-exceptions _ #f (close-output-port out)))
+
+(define (safe-write-out out thunk)
+  ;; Returns #t on success, #f if writing to the socket fails (e.g. EPIPE).
+  (handle-exceptions _ #f (begin (thunk) #t)))
+
 (define (handle-conn! in out)
   ;; Returns #t if the connection should remain in the active set, #f to drop.
+  ;; Every write to OUT is wrapped: a broken-pipe in either the eval-result
+  ;; write or the error-reporting write must drop the connection, never crash
+  ;; the host.
   (cond
     ((not (handle-exceptions _ #f (char-ready? in)))
-     #t)                                   ; idle — keep
+     #t)
     (else
      (handle-exceptions exn
-       (begin
-         (display "[error] " out)
-         (display (condition->string exn) out)
-         (display "\n> " out)
-         (flush-output out)
-         #t)
-       (let ((expr (read in)))
-         (cond
-           ((or (eof-object? expr) (equal? expr ',quit))
-            (drop-conn! out)
-            (handle-exceptions _ #f (close-input-port in))
-            (handle-exceptions _ #f (close-output-port out))
-            #f)
-           (else
-            (let ((result (eval expr (interaction-environment))))
-              (write result out)
-              (display "\n> " out)
-              (flush-output out)
-              #t))))))))
+       ;; Outermost guard — any unhandled condition (incl. EPIPE from a
+       ;; client that disconnected mid-response) drops the connection.
+       (begin (drop-conn-fully! in out) #f)
+       (handle-exceptions exn
+         ;; Eval raised; try to inform the client. If the write itself
+         ;; fails, treat the connection as dead.
+         (if (safe-write-out
+              out
+              (lambda ()
+                (display "[error] " out)
+                (display (condition->string exn) out)
+                (display "\n> " out)
+                (flush-output out)))
+             #t
+             (begin (drop-conn-fully! in out) #f))
+         (let ((expr (read in)))
+           (cond
+             ((or (eof-object? expr) (equal? expr ',quit))
+              (drop-conn-fully! in out)
+              #f)
+             (else
+              (let ((result (eval expr (interaction-environment))))
+                (if (safe-write-out
+                     out
+                     (lambda ()
+                       (write result out)
+                       (display "\n> " out)
+                       (flush-output out)))
+                    #t
+                    (begin (drop-conn-fully! in out) #f)))))))))))
 
 (define (poll-repl-input!)
   (set! *repl-conns*
@@ -1073,7 +1281,7 @@
 (define (frame!)
   (poll-repl-accept!)
   (poll-repl-input!)
-  (check-watches!)
+  (when *watch-enabled?* (check-watches!))
   (cond
    ((not (is-window-ready?))
     (thread-sleep! 0.05))

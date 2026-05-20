@@ -152,6 +152,7 @@ The host reads these environment variables at startup:
 | `STATIC_CHICKEN_APP_ROOT` | current directory | Root directory for app files |
 | `STATIC_CHICKEN_ENTRY` | `main.scm` | Entry file loaded after watched source modules |
 | `STATIC_CHICKEN_WATCH_DIRS` | `src:plugins` | Colon-separated directories to hot-load/watch |
+| `STATIC_CHICKEN_WATCH` | unset | Set to `1` to poll watched files every frame and reload on change. When unset, sources are loaded once at startup and reloads must be triggered manually (REPL `(check-watches!)` or the Emacs hook). |
 | `STATIC_CHICKEN_DEBUG_FONT` | `vendor/static-chicken/assets/fonts/SpaceMono-Regular.ttf` | TTF used by the runtime error overlay |
 | `STATIC_CHICKEN_LOG_LINES` | `200` | Maximum stdout lines kept in the in-game log panel |
 | `REPL_PORT` | `1234` | TCP REPL port on `127.0.0.1` |
@@ -249,6 +250,24 @@ text input:
     ;; append typed to your editor/input buffer
     typed))
 ```
+
+## Emacs Integration
+
+`editor/static-chicken.el` ships a minor mode that binds `C-c C-c` to save
+every modified `.scm` buffer and send `(check-watches!)` over the TCP REPL so
+the running app reloads only the files that changed. It works whether or not
+the app was started with `STATIC_CHICKEN_WATCH=1`.
+
+```elisp
+(add-to-list 'load-path
+             (expand-file-name "vendor/static-chicken/editor"
+                               "/path/to/my-app"))
+(require 'static-chicken)
+(add-hook 'scheme-mode-hook #'static-chicken-mode)
+```
+
+Customize `static-chicken-repl-host` / `static-chicken-repl-port` if the app
+listens on a non-default address.
 
 ## Updating Apps
 
