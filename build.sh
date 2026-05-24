@@ -92,12 +92,31 @@ fi
 
 # 1b. CHICKEN eggs needed by runtime.scm (TCP REPL + hash tables + threads).
 # Install into chicken-musl's repo on first build. Requires network access.
-for egg in srfi-1 srfi-18 srfi-69; do
+for egg in srfi-1 srfi-18 srfi-69 coops; do
   if [ ! -f "$CHICKEN_PREFIX/lib/chicken/11/${egg}.import.so" ]; then
     log "Installing CHICKEN egg: $egg"
-    (cd /tmp && "$CHICKEN_PREFIX/bin/chicken-install" "$egg")
+    (cd /tmp && "$CHICKEN_PREFIX/bin/chicken-install" -keep "$egg")
   fi
 done
+
+copy_import_library() {
+  local egg="$1"
+  local module="$2"
+  local src="${CHICKEN_INSTALL_CACHE:-$HOME/.cache/chicken-install}/$egg/$module.import.scm"
+  if [ -f "$src" ]; then
+    install -m 0644 "$src" "$ROOT/$module.import.scm"
+  elif [ ! -f "$ROOT/$module.import.scm" ]; then
+    echo "ERROR: missing source import library for $module: $src" >&2
+    echo "       Reinstall with: $CHICKEN_PREFIX/bin/chicken-install -keep $egg" >&2
+    exit 1
+  fi
+}
+
+copy_import_library matchable matchable
+copy_import_library miscmacros miscmacros
+copy_import_library record-variants record-variants
+copy_import_library coops coops
+copy_import_library coops coops-primitive-objects
 
 # 2. raylib 6.0 static lib (per-target — switching backends needs a clean rebuild)
 RAYLIB_STAMP="$RAYLIB_SRC/.built-$TARGET"
@@ -173,6 +192,7 @@ esac
 "$CSC" -O3 -d1 -static \
        -cc "$CC_MUSL" \
        -C "-I$RAYLIB_SRC" \
+       -J \
        -c "$ROOT/raylib.scm" \
        -o "$BUILD/raylib.o"
 
@@ -181,8 +201,15 @@ esac
 cd "$BUILD"
 "$CSC" -O3 -d1 -static \
        -cc "$CC_MUSL" \
+       -I "$BUILD" \
+       -I "$ROOT" \
        -C "-I$RAYLIB_SRC" \
        -L "$RAYLIB_SRC/libraylib.a" \
+       -link matchable \
+       -link miscmacros \
+       -link record-variants \
+       -link coops \
+       -link coops-primitive-objects \
        "${LINK_LIBS[@]}" \
        "$ROOT/runtime.scm" \
        -o "$APP_NAME"

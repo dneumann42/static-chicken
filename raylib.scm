@@ -8,7 +8,9 @@
 
 (declare (unit raylib))
 
-(import (chicken base) (chicken foreign) (srfi 1) (srfi 9))
+(module raylib *
+
+(import scheme (chicken base) (chicken foreign) (srfi 1) (srfi 9))
 
 (foreign-declare "#include \"raylib.h\"")
 (foreign-declare "#include <string.h>")
@@ -695,3 +697,4 @@ EOF
 
 (define cursor-hidden?
   (foreign-lambda bool "IsCursorHidden"))
+)
