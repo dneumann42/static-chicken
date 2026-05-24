@@ -47,6 +47,17 @@
      "  "
      (if expr (->display-string expr) ""))))
 
+(define (format-condition-message msg args)
+  (cond
+    ((and (string=? msg "unbound variable")
+          (pair? args)
+          (symbol? (car args)))
+     (format #f "unbound variable: ~A" (car args)))
+    ((pair? args)
+     (format #f "~A: ~S" msg args))
+    (else
+     msg)))
+
 (define (condition->runtime-error exn context)
   (cond
     ((condition? exn)
@@ -56,13 +67,11 @@
             (chain (exn-call-chain exn))
             (source (or (call-chain-location chain)
                         (and loc (->display-string loc))))
-            (text (format #f "~A~A~A~A"
+            (formatted-msg (format-condition-message msg args))
+            (text (format #f "~A~A~A"
                           (if context (format #f "~A: " context) "")
                           (if source (format #f "~A: " source) "")
-                          msg
-                          (if (pair? args)
-                              (format #f ": ~S" args)
-                              ""))))
+                          formatted-msg)))
        (make-runtime-error context msg source args chain text)))
     (else
      (let ((text (format #f "~A~A"

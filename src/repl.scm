@@ -26,11 +26,16 @@
                "[repl] accept failed: ~A~%"
                (condition->string exn))
       (receive (in out) (tcp-accept *repl-listener*)
-        (display ";; static-chicken REPL — eval shares the live image.\n" out)
-        (display ";; type Ctrl-D or ,quit to disconnect.\n> " out)
-        (flush-output out)
-        (set! *repl-clients* (cons out *repl-clients*))
-        (set! *repl-conns* (cons (list in out "") *repl-conns*))))))
+        (if (safe-write-out
+             out
+             (lambda ()
+               (display ";; static-chicken REPL — eval shares the live image.\n" out)
+               (display ";; type Ctrl-D or ,quit to disconnect.\n> " out)
+               (flush-output out)))
+            (begin
+              (set! *repl-clients* (cons out *repl-clients*))
+              (set! *repl-conns* (cons (list in out "") *repl-conns*)))
+            (drop-conn-fully! in out))))))
 
 (define (drop-conn! out)
   (set! *repl-clients*

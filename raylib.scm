@@ -18,6 +18,7 @@
 (foreign-declare #<<EOF
 static Font rl_loaded_font = { 0 };
 static Font rl_debug_font = { 0 };
+static Texture2D rl_textures[1024] = { 0 };
 
 static Color rl_color(int r, int g, int b, int a) {
     Color c;
@@ -157,6 +158,71 @@ static void rl_set_texture_filter(unsigned int id, int filter) {
     SetTextureFilter(tex, filter);
 }
 
+static int rl_load_texture_handle(const char *path) {
+    for (int i = 1; i < 1024; i++) {
+        if (rl_textures[i].id == 0) {
+            rl_textures[i] = LoadTexture(path);
+            if (rl_textures[i].id == 0) {
+                rl_textures[i] = (Texture2D){ 0 };
+                return 0;
+            }
+            return i;
+        }
+    }
+    return 0;
+}
+
+static void rl_unload_texture_handle(int handle) {
+    if (handle > 0 && handle < 1024 && rl_textures[handle].id != 0) {
+        UnloadTexture(rl_textures[handle]);
+        rl_textures[handle] = (Texture2D){ 0 };
+    }
+}
+
+static int rl_texture_width(int handle) {
+    if (handle > 0 && handle < 1024) return rl_textures[handle].width;
+    return 0;
+}
+
+static int rl_texture_height(int handle) {
+    if (handle > 0 && handle < 1024) return rl_textures[handle].height;
+    return 0;
+}
+
+static void rl_set_texture_handle_filter(int handle, int filter) {
+    if (handle > 0 && handle < 1024 && rl_textures[handle].id != 0) {
+        SetTextureFilter(rl_textures[handle], filter);
+    }
+}
+
+static void rl_draw_texture_region(int handle,
+                                   float sx, float sy, float sw, float sh,
+                                   float dx, float dy, float dw, float dh,
+                                   int r, int g, int b, int a) {
+    if (handle > 0 && handle < 1024 && rl_textures[handle].id != 0) {
+        Rectangle src = { sx, sy, sw, sh };
+        Rectangle dst = { dx, dy, dw, dh };
+        Vector2 origin = { 0.0f, 0.0f };
+        DrawTexturePro(rl_textures[handle], src, dst, origin, 0.0f,
+                       rl_color(r, g, b, a));
+    }
+}
+
+static void rl_begin_mode_2d(float targetX, float targetY,
+                             float offsetX, float offsetY,
+                             float rotation, float zoom) {
+    Camera2D camera = { 0 };
+    camera.target = (Vector2){ targetX, targetY };
+    camera.offset = (Vector2){ offsetX, offsetY };
+    camera.rotation = rotation;
+    camera.zoom = zoom;
+    BeginMode2D(camera);
+}
+
+static void rl_end_mode_2d(void) {
+    EndMode2D();
+}
+
 static float rl_get_window_scale_dpi_x(void) {
     Vector2 dpi = GetWindowScaleDPI();
     return dpi.x;
@@ -286,6 +352,35 @@ EOF
 
 (define (bad-arity name args)
   (error name "expected a color argument or raw RGBA components" args))
+
+;; ---------------------------------------------------------------------------
+;; Camera2D
+
+(define-record-type <camera-2d>
+  (make-camera-2d target offset rotation zoom)
+  camera-2d?
+  (target camera-2d-target camera-2d-target!)
+  (offset camera-2d-offset camera-2d-offset!)
+  (rotation camera-2d-rotation camera-2d-rotation!)
+  (zoom camera-2d-zoom camera-2d-zoom!))
+
+(define %begin-mode-2d
+  (foreign-lambda void "rl_begin_mode_2d"
+                  float float float float float float))
+
+(define end-mode-2d
+  (foreign-lambda void "rl_end_mode_2d"))
+
+(define (begin-mode-2d camera)
+  (unless (camera-2d? camera)
+    (error 'begin-mode-2d "expected Camera2D" camera))
+  (%begin-mode-2d
+   (car (camera-2d-target camera))
+   (cadr (camera-2d-target camera))
+   (car (camera-2d-offset camera))
+   (cadr (camera-2d-offset camera))
+   (camera-2d-rotation camera)
+   (camera-2d-zoom camera)))
 
 (define key-null 0)
 (define key-space 32)
@@ -634,6 +729,36 @@ EOF
 
 (define set-texture-filter
   (foreign-lambda void "rl_set_texture_filter" unsigned-int int))
+
+(define load-texture
+  (foreign-lambda int "rl_load_texture_handle" c-string))
+
+(define unload-texture
+  (foreign-lambda void "rl_unload_texture_handle" int))
+
+(define texture-width
+  (foreign-lambda int "rl_texture_width" int))
+
+(define texture-height
+  (foreign-lambda int "rl_texture_height" int))
+
+(define set-texture-handle-filter
+  (foreign-lambda void "rl_set_texture_handle_filter" int int))
+
+(define %draw-texture-region-rgba
+  (foreign-lambda void "rl_draw_texture_region"
+                  int
+                  float float float float
+                  float float float float
+                  int int int int))
+
+(define (draw-texture-region . args)
+  (case (length args)
+    ((10) (call-with-color %draw-texture-region-rgba
+                           (take args 9)
+                           (list-ref args 9)))
+    ((13) (apply %draw-texture-region-rgba args))
+    (else (bad-arity 'draw-texture-region args))))
 
 (define set-text-line-spacing
   (foreign-lambda void "SetTextLineSpacing" int))

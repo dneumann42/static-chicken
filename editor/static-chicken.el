@@ -64,6 +64,11 @@ Defaults to `guile' since `geiser-guile' is the common install."
   :type 'symbol
   :group 'static-chicken)
 
+(defcustom static-chicken-use-geiser nil
+  "When non-nil, use `geiser-connect' instead of the faster plain comint REPL."
+  :type 'boolean
+  :group 'static-chicken)
+
 (defcustom static-chicken-repl-split 'horizontal
   "How `static-chicken-connect-repl' splits the frame for the REPL.
 `horizontal' produces a side-by-side split (good for wide monitors),
@@ -171,7 +176,8 @@ placement honors `static-chicken-repl-split'."
   (interactive)
   (static-chicken--with-split
     (cond
-     ((fboundp 'geiser-connect)
+     ((and static-chicken-use-geiser
+           (fboundp 'geiser-connect))
       (geiser-connect static-chicken-geiser-impl
                       static-chicken-repl-host
                       static-chicken-repl-port))

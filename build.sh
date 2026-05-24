@@ -64,7 +64,9 @@ command -v "$CC_MUSL" >/dev/null \
 
 # Build vendored Wayland-stack deps if missing (only needed for the wayland target).
 DEPS_PREFIX="$ROOT/vendor/deps/prefix"
-if [ "$TARGET" = wayland ] && [ ! -f "$DEPS_PREFIX/lib64/libwayland-client.a" ]; then
+if [ "$TARGET" = wayland ] &&
+   [ ! -f "$DEPS_PREFIX/lib64/libwayland-client.a" ] &&
+   [ ! -f "$DEPS_PREFIX/lib/libwayland-client.a" ]; then
   log "Wayland deps missing — running ./build-deps.sh"
   "$ROOT/build-deps.sh"
 fi
