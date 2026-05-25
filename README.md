@@ -277,6 +277,8 @@ the app was started with `STATIC_CHICKEN_WATCH=1`.
 (add-hook 'scheme-mode-hook #'static-chicken-mode)
 ```
 
+The plain comint REPL persists command history in `.static-chicken-repl-history`
+at the project root. Use C-r in the REPL buffer to search that history.
 Customize `static-chicken-repl-host` / `static-chicken-repl-port` if the app
 listens on a non-default address.
 

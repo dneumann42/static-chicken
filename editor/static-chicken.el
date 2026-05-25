@@ -114,6 +114,31 @@ Returns an absolute directory path, or nil if none is found."
 (defvar static-chicken--app-buffer-name "*static-chicken-app*")
 (defvar static-chicken--repl-buffer-name "*static-chicken-repl*")
 
+(defun static-chicken--repl-history-file ()
+  "Return the file used for persisted plain comint REPL history."
+  (if-let ((root (static-chicken--project-root)))
+      (expand-file-name ".static-chicken-repl-history" root)
+    (expand-file-name "static-chicken-repl-history" user-emacs-directory)))
+
+(defun static-chicken--write-repl-history (&rest _)
+  "Persist the current buffer's comint input ring, ignoring write failures."
+  (when (derived-mode-p 'comint-mode)
+    (ignore-errors
+      (comint-write-input-ring))))
+
+(defun static-chicken--setup-comint-repl ()
+  "Configure static-chicken-specific behavior in a plain comint REPL buffer."
+  (setq-local comint-prompt-regexp "^> ")
+  (setq-local comint-use-prompt-regexp t)
+  (setq-local comint-input-ring-file-name
+              (static-chicken--repl-history-file))
+  (comint-read-input-ring t)
+  (add-hook 'comint-input-filter-functions
+            #'static-chicken--write-repl-history nil t)
+  (add-hook 'kill-buffer-hook
+            #'static-chicken--write-repl-history nil t)
+  (local-set-key (kbd "C-r") #'comint-history-isearch-backward-regexp))
+
 (defun static-chicken--app-running-p ()
   "Return non-nil if a static-chicken app process is alive in our buffer."
   (let ((buf (get-buffer static-chicken--app-buffer-name)))
@@ -191,8 +216,7 @@ placement honors `static-chicken-repl-split'."
           (when existing (kill-buffer existing))
           (let ((buf (make-comint buf-name (cons host port))))
             (with-current-buffer buf
-              (setq-local comint-prompt-regexp "^> ")
-              (setq-local comint-use-prompt-regexp t))
+              (static-chicken--setup-comint-repl))
             (pop-to-buffer buf))))))))
 
 (defun static-chicken-reload ()
