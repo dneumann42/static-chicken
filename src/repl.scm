@@ -17,6 +17,95 @@
 ;; and per-client readability with tcp-accept-ready? / char-ready?, so we never
 ;; block on I/O. The frame loop drives everything.
 (define *repl-conns* '())   ; ((in out buffer) ...)
+(define *current-repl-in* (make-parameter #f))
+(define *current-repl-out* (make-parameter #f))
+(define *repl-ui-next-id* 0)
+(define *repl-ui-protocol-prefix* ";; STATIC-CHICKEN-UI ")
+(define *repl-completion-groups* '())
+
+(define (next-repl-ui-id!)
+  (set! *repl-ui-next-id* (+ *repl-ui-next-id* 1))
+  *repl-ui-next-id*)
+
+(define (write-repl-ui-message! out payload)
+  (safe-write-out
+   out
+   (lambda ()
+     (display *repl-ui-protocol-prefix* out)
+     (write payload out)
+     (newline out)
+     (flush-output out))))
+
+(define (send-repl-ui-message! payload)
+  (let ((out (*current-repl-out*)))
+    (if out
+        (write-repl-ui-message! out payload)
+        (for-each
+         (lambda (client)
+           (write-repl-ui-message! client payload))
+         *repl-clients*))))
+
+(define (repl-completions! group choices)
+  "Register completion CHOICES for GROUP in connected Emacs REPL clients."
+  (set! *repl-completion-groups*
+        (cons (cons group choices)
+              (alist-delete group *repl-completion-groups* eq?)))
+  (send-repl-ui-message! (list 'completions group choices))
+  choices)
+
+(define (repl-clear-completions! group)
+  "Clear completion candidates for GROUP in connected Emacs REPL clients."
+  (set! *repl-completion-groups*
+        (alist-delete group *repl-completion-groups* eq?))
+  (send-repl-ui-message! (list 'clear-completions group))
+  group)
+
+(define (send-repl-completion-snapshot! out)
+  (for-each
+   (lambda (group)
+     (write-repl-ui-message!
+      out
+      (list 'completions (car group) (cdr group))))
+   (reverse *repl-completion-groups*)))
+
+(define (wait-repl-ui-response! id)
+  (let ((in (*current-repl-in*)))
+    (unless in
+      (error "REPL UI prompt is only available while evaluating REPL input"))
+    (let loop ()
+      (let ((message (read in)))
+        (cond
+          ((eof-object? message)
+           (error "REPL UI prompt disconnected"))
+          ((and (pair? message)
+                (eq? (car message) 'static-chicken-ui-response)
+                (pair? (cdr message))
+                (equal? (cadr message) id))
+           (let ((status (and (pair? (cddr message)) (caddr message)))
+                 (value (and (pair? (cdddr message)) (cadddr message))))
+             (cond
+               ((eq? status 'ok) value)
+               ((eq? status 'cancel) (error "REPL UI prompt cancelled"))
+               (else (error "invalid REPL UI prompt response" message)))))
+          ((and (pair? message)
+                (eq? (car message) 'static-chicken-ui-response))
+           (loop))
+          (else
+           (error "unexpected REPL UI prompt response" message)))))))
+
+(define (repl-choose prompt choices . maybe-options)
+  "Ask Emacs to select one value from CHOICES and return the selected string."
+  (let ((id (next-repl-ui-id!))
+        (options (if (null? maybe-options) '() (car maybe-options))))
+    (send-repl-ui-message! (list 'choose id prompt choices options))
+    (wait-repl-ui-response! id)))
+
+(define (repl-input prompt . maybe-options)
+  "Ask Emacs for a free-form text value and return the entered string."
+  (let ((id (next-repl-ui-id!))
+        (options (if (null? maybe-options) '() (car maybe-options))))
+    (send-repl-ui-message! (list 'input id prompt options))
+    (wait-repl-ui-response! id)))
 
 (define (poll-repl-accept!)
   (when (and *repl-listener*
@@ -33,6 +122,7 @@
                (display ";; type Ctrl-D or ,quit to disconnect.\n> " out)
                (flush-output out)))
             (begin
+              (send-repl-completion-snapshot! out)
               (set! *repl-clients* (cons out *repl-clients*))
               (set! *repl-conns* (cons (list in out "") *repl-conns*)))
             (drop-conn-fully! in out))))))
@@ -112,7 +202,7 @@
      (display "> " out)
      (flush-output out))))
 
-(define (eval-repl-line! line out)
+(define (eval-repl-line! line in out)
   (handle-exceptions exn
     (safe-write-out
      out
@@ -128,7 +218,10 @@
         ((equal? expr ',quit)
          'quit)
         (else
-         (let ((result (eval expr (interaction-environment))))
+         (let ((result
+                (parameterize ((*current-repl-in* in)
+                               (*current-repl-out* out))
+                  (eval expr (interaction-environment)))))
            (safe-write-out
             out
             (lambda ()
@@ -136,7 +229,7 @@
               (display "\n> " out)
               (flush-output out)))))))))
 
-(define (process-repl-buffer! buffer out)
+(define (process-repl-buffer! buffer in out)
   (let loop ((buffer buffer))
     (let ((newline (complete-expression-index buffer)))
       (cond
@@ -145,7 +238,7 @@
         (else
          (let* ((line (substring buffer 0 newline))
                 (rest (substring buffer (+ newline 1) (string-length buffer)))
-                (result (eval-repl-line! line out)))
+                (result (eval-repl-line! line in out)))
            (cond
              ((eq? result 'quit) (cons #f rest))
              (else (loop rest)))))))))
@@ -170,6 +263,7 @@
                     (let ((processed
                            (process-repl-buffer!
                             (string-append buffer text)
+                            in
                             out)))
                       (if (car processed)
                           (list in out (cdr processed))

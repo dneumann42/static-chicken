@@ -18,6 +18,7 @@
 ;;; Code:
 
 (require 'comint)
+(require 'cl-lib)
 (require 'geiser-mode nil 'noerror)
 
 (defgroup static-chicken nil
@@ -113,6 +114,10 @@ Returns an absolute directory path, or nil if none is found."
 
 (defvar static-chicken--app-buffer-name "*static-chicken-app*")
 (defvar static-chicken--repl-buffer-name "*static-chicken-repl*")
+(defconst static-chicken--protocol-prefix ";; STATIC-CHICKEN-UI ")
+(defvar-local static-chicken--protocol-fragment "")
+(defvar-local static-chicken--completion-groups nil)
+(defvar-local static-chicken--comint-repl-setup nil)
 
 (defun static-chicken--repl-history-file ()
   "Return the file used for persisted plain comint REPL history."
@@ -126,18 +131,175 @@ Returns an absolute directory path, or nil if none is found."
     (ignore-errors
       (comint-write-input-ring))))
 
+(defun static-chicken--completion-candidates ()
+  "Return all Scheme-registered REPL completion candidates for this buffer."
+  (delete-dups
+   (copy-sequence
+    (apply #'append (mapcar #'cdr static-chicken--completion-groups)))))
+
+(defun static-chicken--string-start-for-completion (limit)
+  "Return string-content start when point is inside a string after LIMIT."
+  (let ((pos limit)
+        (start nil)
+        (escaped nil))
+    (while (< pos (point))
+      (let ((ch (char-after pos)))
+        (cond
+         (escaped
+          (setq escaped nil))
+         ((eq ch ?\\)
+          (setq escaped t))
+         ((eq ch ?\")
+          (setq start (if start nil (1+ pos))))))
+      (setq pos (1+ pos)))
+    start))
+
+(defun static-chicken--completion-at-point ()
+  "Complete REPL input from candidates registered by Scheme."
+  (let ((candidates (static-chicken--completion-candidates)))
+    (when candidates
+      (let* ((limit (save-excursion
+                      (comint-bol)
+                      (point)))
+             (string-start (static-chicken--string-start-for-completion limit))
+             (end (point))
+             (start (or string-start
+                        (save-excursion
+                          (skip-chars-backward "[:alnum:]_?!*/+<>=.-" limit)
+                          (point)))))
+        (list start end candidates)))))
+
+(defun static-chicken--send-protocol-response (id status &optional value)
+  "Send a hidden protocol response for prompt ID."
+  (when-let ((proc (get-buffer-process (current-buffer))))
+    (process-send-string
+     proc
+     (concat (prin1-to-string
+              (list 'static-chicken-ui-response id status value))
+             "\n"))))
+
+(defun static-chicken--protocol-option (key options)
+  "Read KEY from protocol OPTIONS alist."
+  (cdr (assq key options)))
+
+(defun static-chicken--handle-choice-request (id prompt choices options)
+  "Handle a Scheme choice request using minibuffer completion."
+  (condition-case err
+      (let* ((default (static-chicken--protocol-option 'default options))
+             (selection (completing-read prompt choices nil t nil nil default)))
+        (static-chicken--send-protocol-response id 'ok selection))
+    (quit
+     (static-chicken--send-protocol-response id 'cancel nil))
+    (error
+     (message "static-chicken prompt failed: %s" (error-message-string err))
+     (static-chicken--send-protocol-response id 'cancel nil))))
+
+(defun static-chicken--handle-input-request (id prompt options)
+  "Handle a Scheme text input request using the minibuffer."
+  (condition-case err
+      (let* ((default (static-chicken--protocol-option 'default options))
+             (input (read-from-minibuffer prompt nil nil nil nil default)))
+        (static-chicken--send-protocol-response
+         id 'ok (if (string-empty-p input) default input)))
+    (quit
+     (static-chicken--send-protocol-response id 'cancel nil))
+    (error
+     (message "static-chicken input failed: %s" (error-message-string err))
+     (static-chicken--send-protocol-response id 'cancel nil))))
+
+(defun static-chicken--set-completion-group (group choices)
+  "Set completion CHOICES for GROUP in the current REPL buffer."
+  (setq static-chicken--completion-groups
+        (cons (cons group choices)
+              (assq-delete-all group static-chicken--completion-groups))))
+
+(defun static-chicken--clear-completion-group (group)
+  "Clear completion candidates for GROUP in the current REPL buffer."
+  (setq static-chicken--completion-groups
+        (assq-delete-all group static-chicken--completion-groups)))
+
+(defun static-chicken--handle-protocol-message (message)
+  "Handle one hidden static-chicken protocol MESSAGE."
+  (pcase message
+    (`(choose ,id ,prompt ,choices ,options)
+     (static-chicken--handle-choice-request id prompt choices options))
+    (`(input ,id ,prompt ,options)
+     (static-chicken--handle-input-request id prompt options))
+    (`(completions ,group ,choices)
+     (static-chicken--set-completion-group group choices))
+    (`(clear-completions ,group)
+     (static-chicken--clear-completion-group group))
+    (_
+     (message "static-chicken: unknown REPL protocol message: %S" message))))
+
+(defun static-chicken--protocol-fragment-p (text)
+  "Return non-nil if TEXT could be the start of a protocol line."
+  (and (not (string-empty-p text))
+       (string-prefix-p text static-chicken--protocol-prefix)))
+
+(defun static-chicken--handle-protocol-line (line)
+  "Handle a hidden protocol LINE, reporting malformed messages."
+  (condition-case err
+      (static-chicken--handle-protocol-message
+       (car (read-from-string
+             (substring line (length static-chicken--protocol-prefix)))))
+    (error
+     (message "static-chicken: malformed REPL protocol line: %s"
+              (error-message-string err)))))
+
+(defun static-chicken--preoutput-filter (text)
+  "Strip and handle hidden static-chicken protocol lines from TEXT."
+  (let ((pending (concat static-chicken--protocol-fragment text))
+        (visible ""))
+    (setq static-chicken--protocol-fragment "")
+    (while (string-match "\n" pending)
+      (let ((line (substring pending 0 (match-beginning 0))))
+        (setq pending (substring pending (match-end 0)))
+        (if (string-prefix-p static-chicken--protocol-prefix line)
+            (static-chicken--handle-protocol-line line)
+          (setq visible (concat visible line "\n")))))
+    (cond
+     ((static-chicken--protocol-fragment-p pending)
+      (setq static-chicken--protocol-fragment pending))
+     ((string-prefix-p static-chicken--protocol-prefix pending)
+      (setq static-chicken--protocol-fragment pending))
+     (t
+      (setq visible (concat visible pending))))
+    visible))
+
 (defun static-chicken--setup-comint-repl ()
   "Configure static-chicken-specific behavior in a plain comint REPL buffer."
-  (setq-local comint-prompt-regexp "^> ")
-  (setq-local comint-use-prompt-regexp t)
-  (setq-local comint-input-ring-file-name
-              (static-chicken--repl-history-file))
-  (comint-read-input-ring t)
-  (add-hook 'comint-input-filter-functions
-            #'static-chicken--write-repl-history nil t)
-  (add-hook 'kill-buffer-hook
-            #'static-chicken--write-repl-history nil t)
-  (local-set-key (kbd "C-r") #'comint-history-isearch-backward-regexp))
+  (when (derived-mode-p 'comint-mode)
+    (setq-local comint-prompt-regexp "^> ")
+    (setq-local comint-use-prompt-regexp t)
+    (setq-local comint-input-ring-file-name
+                (static-chicken--repl-history-file))
+    (unless static-chicken--comint-repl-setup
+      (comint-read-input-ring t))
+    (add-hook 'comint-input-filter-functions
+              #'static-chicken--write-repl-history nil t)
+    (add-hook 'comint-preoutput-filter-functions
+              #'static-chicken--preoutput-filter nil t)
+    (add-hook 'completion-at-point-functions
+              #'static-chicken--completion-at-point nil t)
+    (add-hook 'kill-buffer-hook
+              #'static-chicken--write-repl-history nil t)
+    (local-set-key (kbd "C-r") #'comint-history-isearch-backward-regexp)
+    (local-set-key (kbd "TAB") #'completion-at-point)
+    (setq-local static-chicken--comint-repl-setup t)))
+
+(defun static-chicken--repl-buffer-p (buffer)
+  "Return non-nil when BUFFER looks like a static-chicken plain comint REPL."
+  (with-current-buffer buffer
+    (and (derived-mode-p 'comint-mode)
+         (string= (buffer-name buffer) static-chicken--repl-buffer-name))))
+
+(defun static-chicken--setup-existing-repl-buffers ()
+  "Apply current static-chicken comint setup to already-open REPL buffers."
+  (dolist (buffer (buffer-list))
+    (when (static-chicken--repl-buffer-p buffer)
+      (with-current-buffer buffer
+        (static-chicken--setup-comint-repl)))))
 
 (defun static-chicken--app-running-p ()
   "Return non-nil if a static-chicken app process is alive in our buffer."
@@ -212,7 +374,10 @@ placement honors `static-chicken-repl-split'."
              (buf-name (string-trim static-chicken--repl-buffer-name "\\*" "\\*"))
              (existing (get-buffer static-chicken--repl-buffer-name)))
         (if (and existing (get-buffer-process existing))
-            (pop-to-buffer existing)
+            (progn
+              (with-current-buffer existing
+                (static-chicken--setup-comint-repl))
+              (pop-to-buffer existing))
           (when existing (kill-buffer existing))
           (let ((buf (make-comint buf-name (cons host port))))
             (with-current-buffer buf
@@ -285,7 +450,9 @@ opens a comint REPL buffer, and then performs the reload."
 
 \\{static-chicken-mode-map}"
   :lighter " sc"
-  :keymap static-chicken-mode-map)
+  :keymap static-chicken-mode-map
+  (when static-chicken-mode
+    (static-chicken--setup-existing-repl-buffers)))
 
 (provide 'static-chicken)
 

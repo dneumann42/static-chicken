@@ -279,6 +279,25 @@ the app was started with `STATIC_CHICKEN_WATCH=1`.
 
 The plain comint REPL persists command history in `.static-chicken-repl-history`
 at the project root. Use C-r in the REPL buffer to search that history.
+
+The REPL can also ask Emacs for minibuffer-completion choices and register TAB
+completion candidates:
+
+```scheme
+(repl-completions! 'npc-types '("Cuthbert" "Humbert"))
+
+(let ((npc-type (repl-choose "Spawn NPC: "
+                             '("Cuthbert" "Humbert")
+                             '((default . "Cuthbert")))))
+  (spawn-npc *entity-manager* '(100 100) npc-type))
+```
+
+Use `repl-input` for free-form minibuffer input with defaults:
+
+```scheme
+(repl-input "Spawn X: " '((default . "100")))
+```
+
 Customize `static-chicken-repl-host` / `static-chicken-repl-port` if the app
 listens on a non-default address.
 
