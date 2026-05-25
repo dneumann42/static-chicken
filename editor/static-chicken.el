@@ -87,6 +87,11 @@ the active major-mode keymap doesn't already bind."
   :type 'key-sequence
   :group 'static-chicken)
 
+(defcustom static-chicken-repl-find-symbol-key "C-c C-f"
+  "Key sequence bound in the plain REPL to find a function or variable."
+  :type 'key-sequence
+  :group 'static-chicken)
+
 (defun static-chicken--save-scheme-buffers ()
   "Save every modified buffer that visits a .scm file."
   (save-some-buffers t
@@ -136,6 +141,12 @@ Returns an absolute directory path, or nil if none is found."
   (delete-dups
    (copy-sequence
     (apply #'append (mapcar #'cdr static-chicken--completion-groups)))))
+
+(defun static-chicken--completion-group-candidates (group)
+  "Return Scheme-registered completion candidates for GROUP."
+  (delete-dups
+   (copy-sequence
+    (or (cdr (assq group static-chicken--completion-groups)) '()))))
 
 (defun static-chicken--string-start-for-completion (limit)
   "Return string-content start when point is inside a string after LIMIT."
@@ -286,7 +297,24 @@ Returns an absolute directory path, or nil if none is found."
               #'static-chicken--write-repl-history nil t)
     (local-set-key (kbd "C-r") #'comint-history-isearch-backward-regexp)
     (local-set-key (kbd "TAB") #'completion-at-point)
+    (local-set-key (kbd static-chicken-repl-find-symbol-key)
+                   #'static-chicken-repl-find-symbol)
     (setq-local static-chicken--comint-repl-setup t)))
+
+(defun static-chicken-repl-find-symbol ()
+  "Prompt for a REPL function or variable and insert the selected name."
+  (interactive)
+  (let* ((kind (completing-read "Find: " '("Function" "Variable") nil t
+                                nil nil "Function"))
+         (group (if (string= kind "Variable") 'repl-variables 'repl-functions))
+         (candidates (static-chicken--completion-group-candidates group)))
+    (unless candidates
+      (user-error "static-chicken: no %s candidates yet; reconnect or reload"
+                  (downcase kind)))
+    (let ((selection (completing-read (concat kind ": ") candidates nil t)))
+      (when (use-region-p)
+        (delete-region (region-beginning) (region-end)))
+      (insert selection))))
 
 (defun static-chicken--repl-buffer-p (buffer)
   "Return non-nil when BUFFER looks like a static-chicken plain comint REPL."

@@ -140,79 +140,57 @@
            (loop (cdr values)
                  (string-append out ", " (car values))))))))
 
-(define (definition-name form)
+(define (apropos-type info)
   (cond
-    ((and (pair? form)
-          (eq? (car form) 'define)
-          (pair? (cdr form)))
-     (let ((name (cadr form)))
-       (cond
-         ((symbol? name) (list name))
-         ((and (pair? name) (symbol? (car name))) (list (car name)))
-         (else '()))))
-    ((and (pair? form)
-          (eq? (car form) 'define-record-type)
-          (pair? (cdr form)))
-     (let ((parts (cdr form)))
-       (filter symbol?
-               (append
-                (take parts (min 3 (length parts)))
-                (append-map
-                 (lambda (field)
-                   (if (pair? field) (filter symbol? (cdr field)) '()))
-                 (drop parts (min 3 (length parts))))))))
-    (else '())))
+    ((pair? info) (car info))
+    (else info)))
 
-(define (collect-global-names-in forms)
-  (let loop ((forms forms) (acc '()))
-    (cond
-      ((null? forms) acc)
-      ((not (pair? (car forms))) (loop (cdr forms) acc))
-      (else
-       (let ((form (car forms)))
-         (cond
-           ((and (pair? form) (eq? (car form) 'module))
-            (loop (cdr forms)
-                  (append (collect-global-names-in (cdddr form)) acc)))
-           ((and (pair? form) (memq (car form) '(begin cond-expand)))
-            (loop (cdr forms)
-                  (append (collect-global-names-in (cdr form)) acc)))
-           (else
-            (loop (cdr forms) (append (definition-name form) acc)))))))))
+(define (apropos-name result)
+  (cdar result))
 
-(define (global-source-files)
-  (let ((raylib (app-path "vendor/static-chicken/raylib.scm")))
-    (append (enumerate-watch-files)
-            (if (file-exists? raylib) (list raylib) '()))))
+(define (apropos-binding result)
+  (cons (apropos-type (cdr result))
+        (symbol->string (apropos-name result))))
 
-(define (global-cache-key files)
-  (map (lambda (path) (cons path (file-mtime-or-zero path))) files))
+(define (apropos-repl-bindings)
+  (map apropos-binding
+       (apropos-information-list '(: (* any))
+                                 sort: #f
+                                 imported?: #f)))
 
-(define runtime-global-names
-  '("*on-update*" "*on-draw*" "*last-error*" "*last-error-text*"
-    "*error-expanded?*" "*log-visible?*" "*watch-visible?*"
-    "*pinned-watches*" "once!" "clear-error!"))
+(define (procedure-binding? binding)
+  (eq? (car binding) 'procedure))
+
+(define (global-binding? binding)
+  (not (memq (car binding) '(keyword macro syntax))))
+
+(define (sorted-binding-names predicate bindings)
+  (sort
+   (delete-duplicates
+    (map cdr (filter predicate bindings))
+    string=?)
+   string<?))
+
+(define (available-repl-symbols)
+  (let* ((bindings (apropos-repl-bindings))
+         (functions (sorted-binding-names procedure-binding? bindings))
+         (variables (sorted-binding-names global-binding? bindings))
+         (all (sort (delete-duplicates
+                     (append functions variables)
+                     string=?)
+                    string<?)))
+    (list (cons 'all all)
+          (cons 'functions functions)
+          (cons 'variables variables))))
 
 (define (available-global-names)
-  (let* ((files (global-source-files))
-         (key (global-cache-key files)))
-    (cond
-      ((and *watch-global-cache*
-            (equal? (vector-ref *watch-global-cache* 0) key))
-       (vector-ref *watch-global-cache* 1))
-      (else
-       (let* ((source-names
-               (append-map
-                (lambda (path)
-                  (map symbol->string
-                       (collect-global-names-in (read-all-forms path))))
-                files))
-              (names (sort (delete-duplicates
-                            (append runtime-global-names source-names)
-                            string=?)
-                           string<?)))
-         (set! *watch-global-cache* (vector key names))
-         names)))))
+  (cdr (assoc 'all (available-repl-symbols))))
+
+(define (available-repl-functions)
+  (cdr (assoc 'functions (available-repl-symbols))))
+
+(define (available-repl-global-variables)
+  (cdr (assoc 'variables (available-repl-symbols))))
 
 (define (watch-global-lines width)
   (let* ((chars (max 24 (quotient (- width 24) 9)))

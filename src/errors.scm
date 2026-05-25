@@ -134,6 +134,7 @@
                    (display "[error] " out)
                    (display str out)
                    (newline out)
+                   (display "> " out)
                    (flush-output out)
                    #t)))
              *repl-clients*)))))

@@ -136,7 +136,9 @@ clean_cached_egg_build_outputs() {
     -delete
 }
 
-for egg in srfi-1 srfi-18 srfi-69 matchable miscmacros record-variants coops; do
+RUNTIME_EGGS="srfi-1 srfi-18 srfi-69 utf8 symbol-utils check-errors apropos matchable miscmacros record-variants coops"
+
+for egg in $RUNTIME_EGGS; do
   clean_cached_egg_build_outputs "$egg"
 done
 
@@ -150,10 +152,11 @@ egg_needs_install() {
 
 # 1b. CHICKEN eggs needed by runtime.scm (TCP REPL + hash tables + threads).
 # Install into the selected CHICKEN repo on first build.
-for egg in srfi-1 srfi-18 srfi-69 matchable miscmacros record-variants coops; do
+for egg in $RUNTIME_EGGS; do
   if egg_needs_install "$egg"; then
     log "Installing CHICKEN egg: $egg"
-    (cd /tmp && "$CHICKEN_PREFIX/bin/chicken-install" -cached -force -keep "$egg")
+    (cd /tmp && "$CHICKEN_PREFIX/bin/chicken-install" -cached -force -keep "$egg") ||
+      (cd /tmp && "$CHICKEN_PREFIX/bin/chicken-install" -force -keep "$egg")
   fi
 done
 
@@ -175,6 +178,7 @@ copy_import_library miscmacros miscmacros
 copy_import_library record-variants record-variants
 copy_import_library coops coops
 copy_import_library coops coops-primitive-objects
+copy_import_library apropos apropos-api
 
 # 2. raylib 6.0 static lib (per-target/renderer — switching needs a clean rebuild)
 RAYLIB_STAMP="$RAYLIB_SRC/.built-$TARGET-$RENDERER"
@@ -276,6 +280,7 @@ cd "$BUILD"
        -link record-variants \
        -link coops \
        -link coops-primitive-objects \
+       -link apropos-api \
        "${LINK_LIBS[@]}" \
        "$ROOT/runtime.scm" \
        -o "$APP_NAME"

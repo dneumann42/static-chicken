@@ -227,7 +227,7 @@ install_eggs() {
     log "CHICKEN not yet built — eggs will be installed on first ./build.sh."
     return
   fi
-  for egg in srfi-1 srfi-18 srfi-69; do
+  for egg in srfi-1 srfi-18 srfi-69 utf8 symbol-utils check-errors apropos; do
     if [ ! -f "$ROOT/chicken-musl/lib/chicken/11/${egg}.import.so" ]; then
       log "Installing CHICKEN egg: $egg"
       (cd /tmp && "$ROOT/chicken-musl/bin/chicken-install" "$egg") \

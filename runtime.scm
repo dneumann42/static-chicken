@@ -27,6 +27,7 @@
         (chicken string) (chicken sort)
         (srfi 1) (srfi 9) (srfi 18) (srfi 69)
         raylib
+        apropos-api
         matchable miscmacros record-variants coops coops-primitive-objects)
 
 (define *on-draw*     (lambda () #f))
@@ -137,7 +138,8 @@
      "vendor/static-chicken/miscmacros.import.scm"
      "vendor/static-chicken/record-variants.import.scm"
      "vendor/static-chicken/coops.import.scm"
-     "vendor/static-chicken/coops-primitive-objects.import.scm")))
+     "vendor/static-chicken/coops-primitive-objects.import.scm"
+     "vendor/static-chicken/apropos-api.import.scm")))
 
 (include "src/errors.scm")
 (include "src/log-capture.scm")

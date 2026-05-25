@@ -126,12 +126,13 @@
 (define (load-in-order! paths announce-reload?)
   (let ((ordered (topo-sort paths)))
     (clear-error!)
-    (for-each
-     (lambda (path)
-       (when announce-reload?
-         (print "[reload] " path)
-         (flush-output))
-       (let ((result (try-load path)))
-         (unless (car result)
-           (broadcast-error! (cdr result)))))
-     ordered)))
+    (let loop ((paths ordered))
+      (when (pair? paths)
+	(let ((path (car paths)))
+	  (when announce-reload?
+	    (print "[reload] " path)
+	    (flush-output))
+	  (let ((result (try-load path)))
+	    (if (car result)
+		(loop (cdr paths))
+		(broadcast-error! (cdr result)))))))))

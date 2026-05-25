@@ -22,6 +22,8 @@
 (define *repl-ui-next-id* 0)
 (define *repl-ui-protocol-prefix* ";; STATIC-CHICKEN-UI ")
 (define *repl-completion-groups* '())
+(define *repl-alias-values* (make-hash-table))
+(define *repl-missing-alias-value* (list 'missing-repl-alias-value))
 
 (define (next-repl-ui-id!)
   (set! *repl-ui-next-id* (+ *repl-ui-next-id* 1))
@@ -60,7 +62,38 @@
   (send-repl-ui-message! (list 'clear-completions group))
   group)
 
+(define (repl-functions)
+  "Return function names available to the REPL as strings."
+  (available-repl-functions))
+
+(define (repl-global-variables)
+  "Return global variable names available to the REPL as strings."
+  (available-repl-global-variables))
+
+(define (repl-refresh-symbol-completions!)
+  "Refresh REPL completion groups for functions and variables."
+  (repl-completions! 'repl-functions (repl-functions))
+  (repl-completions! 'repl-variables (repl-global-variables))
+  #t)
+
+(define (repl-choose-function)
+  "Prompt for a REPL function name and return the selected string."
+  (repl-choose "Function: " (repl-functions)))
+
+(define (repl-choose-global-variable)
+  "Prompt for a REPL global variable name and return the selected string."
+  (repl-choose "Variable: " (repl-global-variables)))
+
+(define (repl-choose-symbol)
+  "Prompt for either a REPL function or global variable name."
+  (let ((kind (repl-choose "Find: " '("Function" "Variable")
+                           '((default . "Function")))))
+    (if (string=? kind "Variable")
+        (repl-choose-global-variable)
+        (repl-choose-function))))
+
 (define (send-repl-completion-snapshot! out)
+  (repl-refresh-symbol-completions!)
   (for-each
    (lambda (group)
      (write-repl-ui-message!
@@ -202,6 +235,107 @@
      (display "> " out)
      (flush-output out))))
 
+(define (unbound-variable-condition-symbol exn)
+  (and (condition? exn)
+       (let ((msg (exn-message exn))
+	     (args (exn-arguments exn)))
+	 (and msg
+	      (string=? msg "unbound variable")
+	      (pair? args)
+	      (symbol? (car args))
+	      (car args)))))
+
+(define (repl-alias-value name)
+  (hash-table-ref *repl-alias-values* name))
+
+(define (apropos-result-module result)
+  (caar result))
+
+(define (apropos-result-name result)
+  (cdar result))
+
+(define (find-repl-symbol-result name)
+  (let loop ((results (apropos-information-list (symbol->string name)
+						sort: #f
+						imported?: #f)))
+    (cond
+     ((null? results) #f)
+     ((eq? (apropos-result-name (car results)) name)
+      (car results))
+     (else
+      (loop (cdr results))))))
+
+(define (repl-symbol-value module name)
+  (cond
+   ((eq? module '||)
+    (if (handle-exceptions _ #f (global-symbol-bound? name))
+	(global-symbol-ref name)
+	*repl-missing-alias-value*))
+   ((symbol? module)
+    (handle-exceptions _
+      *repl-missing-alias-value*
+      (eval name (module-environment module))))
+   (else
+    *repl-missing-alias-value*)))
+
+(define (import-repl-symbol! module name)
+  (and (symbol? module)
+       (not (eq? module '||))
+       (handle-exceptions _
+	 #f
+	 (eval `(import (only ,module ,name)) (interaction-environment))
+	 #t)))
+
+(define (alias-repl-symbol! module name)
+  (let ((value (repl-symbol-value module name)))
+    (and (not (eq? value *repl-missing-alias-value*))
+	 (begin
+	   (hash-table-set! *repl-alias-values* name value)
+	   (eval `(define ,name (repl-alias-value ',name))
+		 (interaction-environment))
+	   #t))))
+
+(define (ensure-repl-symbol-alias! name)
+  (let ((result (find-repl-symbol-result name)))
+    (and result
+	 (let ((module (apropos-result-module result)))
+	   (or (import-repl-symbol! module name)
+	       (alias-repl-symbol! module name))))))
+
+(define (prepare-repl-symbol-aliases! expr)
+  (let ((seen '()))
+    (let walk ((expr expr))
+      (cond
+       ((symbol? expr)
+	(unless (memq expr seen)
+	  (set! seen (cons expr seen))
+	  (handle-exceptions _ #f (ensure-repl-symbol-alias! expr))))
+       ((pair? expr)
+	(cond
+	 ((memq (car expr) '(quote quasiquote)) #f)
+	 (else
+	  (walk (car expr))
+	  (walk (cdr expr)))))
+       ((vector? expr)
+	(let loop ((i 0))
+	  (when (< i (vector-length expr))
+	    (walk (vector-ref expr i))
+	    (loop (+ i 1)))))
+       (else #f)))))
+
+(define (eval-repl-expr expr in out retry-unbound?)
+  (handle-exceptions exn
+    (let ((name (unbound-variable-condition-symbol exn)))
+      (if (and retry-unbound?
+	       name
+	       (ensure-repl-symbol-alias! name))
+	  (eval-repl-expr expr in out #f)
+	  (abort exn)))
+    (parameterize ((*current-repl-in* in)
+		   (*current-repl-out* out))
+      (prepare-repl-symbol-aliases! expr)
+      (eval expr (interaction-environment)))))
+
 (define (eval-repl-line! line in out)
   (handle-exceptions exn
     (safe-write-out
@@ -218,10 +352,7 @@
         ((equal? expr ',quit)
          'quit)
         (else
-         (let ((result
-                (parameterize ((*current-repl-in* in)
-                               (*current-repl-out* out))
-                  (eval expr (interaction-environment)))))
+         (let ((result (eval-repl-expr expr in out #t)))
            (safe-write-out
             out
             (lambda ()
