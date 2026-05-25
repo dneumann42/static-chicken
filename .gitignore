@@ -7,6 +7,7 @@
 
 # Build outputs
 /chicken-musl/
+/chicken-native/
 /vendor/deps/prefix/
 /build/
 **/build/static-chicken/

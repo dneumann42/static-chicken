@@ -230,6 +230,52 @@
                        r g b 255)))
         (loop (cdr ls) (+ line-y line-height) (+ index 1))))))
 
+;; ---------------------------------------------------------------------------
+;; runtime debug overlay
+
+(define (toggle-debug-overlay!)
+  (when (key-pressed? key-f12)
+    (set! *debug-visible?* (not *debug-visible?*))))
+
+(define (update-debug-frame!)
+  (let* ((sample-count (vector-length *debug-fps-samples*))
+         (dt (max 0.0 (get-frame-time)))
+         (old (vector-ref *debug-fps-samples* *debug-fps-index*)))
+    (vector-set! *debug-fps-samples* *debug-fps-index* dt)
+    (set! *debug-fps-total* (+ (- *debug-fps-total* old) dt))
+    (set! *debug-fps-index* (modulo (+ *debug-fps-index* 1) sample-count))
+    (when (< *debug-fps-count* sample-count)
+      (set! *debug-fps-count* (+ *debug-fps-count* 1)))))
+
+(define (rolling-fps)
+  (if (or (= *debug-fps-count* 0)
+          (<= *debug-fps-total* 0.0))
+      0.0
+      (/ *debug-fps-count* *debug-fps-total*)))
+
+(define (one-decimal-string n)
+  (let* ((scaled (inexact->exact (round (* n 10.0))))
+         (whole (quotient scaled 10))
+         (decimal (remainder scaled 10)))
+    (format #f "~A.~A" whole decimal)))
+
+(define (handle-debug-actions!)
+  (toggle-debug-overlay!))
+
+(define (draw-debug-overlay)
+  (when *debug-visible?*
+    (ensure-debug-font!)
+    (let* ((font-size 18)
+           (pad 10)
+           (text (format #f "FPS ~A avg" (one-decimal-string (rolling-fps))))
+           (panel-width (+ (measure-text text font-size) (* pad 2)))
+           (panel-height 40)
+           (x (- (get-screen-width) panel-width 8))
+           (y 8))
+      (draw-rectangle x y panel-width panel-height 10 12 14 210)
+      (draw-rectangle-lines x y panel-width panel-height 120 220 170 255)
+      (draw-debug-text text (+ x pad) (+ y 10) font-size 190 255 210 255))))
+
 (define (log-source-lines)
   (if (string=? *log-partial* "")
       *log-lines*

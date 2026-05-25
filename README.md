@@ -104,37 +104,44 @@ sources, applies local patches, and prepares vendored Wayland dependencies.
 From the consumer project root:
 
 ```sh
-vendor/static-chicken/build.sh wayland
+vendor/static-chicken/build.sh wayland software
 ```
 
 or:
 
 ```sh
-vendor/static-chicken/build.sh x11
+vendor/static-chicken/build.sh wayland hardware
+vendor/static-chicken/build.sh x11 software
+vendor/static-chicken/build.sh x11 hardware
 ```
 
 The output binary is written to:
 
 ```text
-build/static-chicken/<target>/myapp
+build/static-chicken/<target>/<renderer>/myapp
 ```
+
+The default renderer is `software`. Software mode uses the musl toolchain and
+can produce a fully static binary. Hardware mode uses OpenGL 3.3 with the native
+system toolchain so it can load the system GL/EGL driver libraries required by
+Linux hardware rendering.
 
 Set `STATIC_CHICKEN_APP_NAME` to change the executable name:
 
 ```sh
-STATIC_CHICKEN_APP_NAME=my-game vendor/static-chicken/build.sh wayland
+STATIC_CHICKEN_APP_NAME=my-game vendor/static-chicken/build.sh wayland hardware
 ```
 
 Run the binary from the app root so default runtime paths resolve to the app:
 
 ```sh
-build/static-chicken/wayland/myapp
+build/static-chicken/wayland/hardware/myapp
 ```
 
 If you run it from another directory, set `STATIC_CHICKEN_APP_ROOT`:
 
 ```sh
-STATIC_CHICKEN_APP_ROOT=/path/to/my-app build/static-chicken/wayland/myapp
+STATIC_CHICKEN_APP_ROOT=/path/to/my-app build/static-chicken/wayland/hardware/myapp
 ```
 
 If CHICKEN fails while building `user-pass.scm` with an unresolved
@@ -151,6 +158,7 @@ The host reads these environment variables at startup:
 | --- | --- | --- |
 | `STATIC_CHICKEN_APP_ROOT` | current directory | Root directory for app files |
 | `STATIC_CHICKEN_ENTRY` | `main.scm` | Entry file loaded after watched source modules |
+| `STATIC_CHICKEN_RENDERER` | `software` | Build-time renderer selection for `build.sh`: `software` or `hardware` |
 | `STATIC_CHICKEN_WATCH_DIRS` | `src:plugins` | Colon-separated directories to hot-load/watch |
 | `STATIC_CHICKEN_WATCH` | unset | Set to `1` to poll watched files every frame and reload on change. When unset, sources are loaded once at startup and reloads must be triggered manually (REPL `(check-watches!)` or the Emacs hook). |
 | `STATIC_CHICKEN_DEBUG_FONT` | `vendor/static-chicken/assets/fonts/SpaceMono-Regular.ttf` | TTF used by the runtime error overlay |
@@ -181,6 +189,9 @@ different `.ttf`.
 Stdout is tee'd to the terminal and to an in-game log panel. Press `F10` to show
 or hide the log panel; use the mouse wheel or `PageUp` / `PageDown` to scroll.
 The panel keeps the last `STATIC_CHICKEN_LOG_LINES` lines.
+
+Press `F12` to show or hide the runtime debug overlay. It currently displays a
+rolling average FPS calculated from the last 60 frame durations.
 
 Press `F9` to show the watch panel. Enter a Scheme expression to pin it on
 screen; each pinned expression is compiled into a thunk, evaluated every frame,
