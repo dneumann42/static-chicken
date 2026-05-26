@@ -194,7 +194,7 @@ Press `F12` to show or hide the runtime debug overlay. It currently displays a
 rolling average FPS calculated from the last 60 frame durations.
 
 Press `F9` to show the watch panel. Enter a Scheme expression to pin it on
-screen; each pinned expression is compiled into a thunk, evaluated every frame,
+screen; each pinned expression is compiled into a thunk, refreshed periodically,
 and pretty-printed in a sticker. Records without custom printers are shown as
 their raw record vector, including the type and slots. For named fields, add a
 CHICKEN record printer:

@@ -26,6 +26,7 @@
         (chicken process) (chicken process-context) (chicken port)
         (chicken string) (chicken sort)
         (srfi 1) (srfi 9) (srfi 18) (srfi 69)
+        srfi-197
         raylib
         apropos-api
         matchable miscmacros record-variants coops coops-primitive-objects)
@@ -42,7 +43,6 @@
 (define *log-partial* "")
 (define *log-visible?* #f)
 (define *log-scroll* 0)
-(define *debug-visible?* #f)
 (define *debug-fps-samples* (make-vector 60 0.0))
 (define *debug-fps-index* 0)
 (define *debug-fps-count* 0)
@@ -51,6 +51,10 @@
 (define *watch-input* "")
 (define *watch-global-scroll* 0)
 (define *watch-global-cache* #f)
+(define *watch-global-names-cache* #f)
+(define *watch-refresh-interval* 0.25)
+(define *watch-refresh-elapsed* 0.0)
+(define *watch-force-refresh?* #t)
 (define *watch-next-id* 1)
 (define *pinned-watches* '())
 
@@ -139,7 +143,8 @@
      "vendor/static-chicken/record-variants.import.scm"
      "vendor/static-chicken/coops.import.scm"
      "vendor/static-chicken/coops-primitive-objects.import.scm"
-     "vendor/static-chicken/apropos-api.import.scm")))
+     "vendor/static-chicken/apropos-api.import.scm"
+     "vendor/static-chicken/srfi-197.import.scm")))
 
 (include "src/errors.scm")
 (include "src/log-capture.scm")

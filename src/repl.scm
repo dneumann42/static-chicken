@@ -72,8 +72,9 @@
 
 (define (repl-refresh-symbol-completions!)
   "Refresh REPL completion groups for functions and variables."
-  (repl-completions! 'repl-functions (repl-functions))
-  (repl-completions! 'repl-variables (repl-global-variables))
+  (let ((symbols (available-repl-symbols)))
+    (repl-completions! 'repl-functions (cdr (assoc 'functions symbols)))
+    (repl-completions! 'repl-variables (cdr (assoc 'variables symbols))))
   #t)
 
 (define (repl-choose-function)
@@ -153,6 +154,11 @@
              (lambda ()
                (display ";; static-chicken REPL — eval shares the live image.\n" out)
                (display ";; type Ctrl-D or ,quit to disconnect.\n> " out)
+               (when *last-error*
+                 (display "[error] " out)
+                 (display (runtime-error-text *last-error*) out)
+                 (newline out)
+                 (display "> " out))
                (flush-output out)))
             (begin
               (send-repl-completion-snapshot! out)
@@ -332,7 +338,8 @@
 	  (eval-repl-expr expr in out #f)
 	  (abort exn)))
     (parameterize ((*current-repl-in* in)
-		   (*current-repl-out* out))
+		   (*current-repl-out* out)
+		   (current-output-port out))
       (prepare-repl-symbol-aliases! expr)
       (eval expr (interaction-environment)))))
 

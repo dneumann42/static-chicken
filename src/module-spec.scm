@@ -119,6 +119,8 @@
           (hash-table-set! *watch-mtimes* path (file-mtime-or-zero path)))
         all)
        (load-in-order! all #f)
+       (invalidate-watch-global-cache!)
+       (request-watch-refresh!)
        (set! *loaded-once?* #t)))
     (else
      (let ((changed '()))
@@ -131,4 +133,6 @@
               (set! changed (cons path changed)))))
         (enumerate-watch-files))
        (unless (null? changed)
-         (load-in-order! (expand-dependents changed) #t))))))
+         (load-in-order! (expand-dependents changed) #t)
+         (invalidate-watch-global-cache!)
+         (request-watch-refresh!))))))

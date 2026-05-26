@@ -79,7 +79,8 @@
                                    thunk
                                    "(pending)")))
     (set! *watch-next-id* (+ *watch-next-id* 1))
-    (set! *pinned-watches* (append *pinned-watches* (list watch)))))
+    (set! *pinned-watches* (append *pinned-watches* (list watch)))
+    (request-watch-refresh!)))
 
 (define (trim-whitespace s)
   (let* ((n (string-length s))
@@ -110,8 +111,18 @@
      (string-append "[error] " (condition->string exn))
      (pretty-value-string ((pinned-watch-thunk watch))))))
 
+(define (request-watch-refresh!)
+  (set! *watch-force-refresh?* #t))
+
 (define (update-pinned-watches!)
-  (for-each update-pinned-watch! *pinned-watches*))
+  (when (pair? *pinned-watches*)
+    (set! *watch-refresh-elapsed*
+          (+ *watch-refresh-elapsed* (max 0.0 (get-frame-time))))
+    (when (or *watch-force-refresh?*
+              (>= *watch-refresh-elapsed* *watch-refresh-interval*))
+      (set! *watch-force-refresh?* #f)
+      (set! *watch-refresh-elapsed* 0.0)
+      (for-each update-pinned-watch! *pinned-watches*))))
 
 (define (watch-panel-layout)
   (let* ((pad 12)
@@ -192,12 +203,27 @@
 (define (available-repl-global-variables)
   (cdr (assoc 'variables (available-repl-symbols))))
 
+(define (cached-watch-global-names)
+  (or *watch-global-names-cache*
+      (let ((names (available-global-names)))
+        (set! *watch-global-names-cache* names)
+        names)))
+
 (define (watch-global-lines width)
   (let* ((chars (max 24 (quotient (- width 24) 9)))
-         (text (string-join-comma (available-global-names))))
-    (if (string=? text "")
-        (list "(no globals found)")
-        (wrap-line text chars))))
+         (cached *watch-global-cache*))
+    (if (and cached (= chars (vector-ref cached 0)))
+        (vector-ref cached 1)
+        (let* ((text (string-join-comma (cached-watch-global-names)))
+               (lines (if (string=? text "")
+                          (list "(no globals found)")
+                          (wrap-line text chars))))
+          (set! *watch-global-cache* (vector chars lines))
+          lines))))
+
+(define (invalidate-watch-global-cache!)
+  (set! *watch-global-cache* #f)
+  (set! *watch-global-names-cache* #f))
 
 (define (visible-watch-global-lines layout)
   (let* ((w (list-ref layout 2))
@@ -221,7 +247,9 @@
 
 (define (toggle-watch-panel!)
   (when (key-pressed? key-f9)
-    (set! *watch-visible?* (not *watch-visible?*))))
+    (set! *watch-visible?* (not *watch-visible?*))
+    (when *watch-visible?*
+      (request-watch-refresh!))))
 
 (define (trim-last-char s)
   (let ((n (string-length s)))

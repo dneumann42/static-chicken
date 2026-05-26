@@ -94,6 +94,21 @@ static void rl_draw_circle_lines(int x, int y, float radius,
                                  int r, int g, int b, int a) {
     DrawCircleLines(x, y, radius, rl_color(r, g, b, a));
 }
+static void rl_draw_poly(float cx, float cy, int sides, float radius, float rotation,
+                         int r, int g, int b, int a) {
+    Vector2 center = { cx, cy };
+    DrawPoly(center, sides, radius, rotation, rl_color(r, g, b, a));
+}
+static void rl_draw_poly_lines(float cx, float cy, int sides, float radius, float rotation,
+                               int r, int g, int b, int a) {
+    Vector2 center = { cx, cy };
+    DrawPolyLines(center, sides, radius, rotation, rl_color(r, g, b, a));
+}
+static void rl_draw_poly_lines_ex(float cx, float cy, int sides, float radius, float rotation,
+                                  float lineThick, int r, int g, int b, int a) {
+    Vector2 center = { cx, cy };
+    DrawPolyLinesEx(center, sides, radius, rotation, lineThick, rl_color(r, g, b, a));
+}
 static void rl_draw_text(const char *txt, int x, int y, int sz,
                          int r, int g, int b, int a) {
     Color c = rl_color(r, g, b, a);
@@ -565,6 +580,18 @@ EOF
   (foreign-lambda void "rl_draw_circle_lines"
                   int int float int int int int))
 
+(define %draw-poly-rgba
+  (foreign-lambda void "rl_draw_poly"
+                  float float int float float int int int int))
+
+(define %draw-poly-lines-rgba
+  (foreign-lambda void "rl_draw_poly_lines"
+                  float float int float float int int int int))
+
+(define %draw-poly-lines-ex-rgba
+  (foreign-lambda void "rl_draw_poly_lines_ex"
+                  float float int float float float int int int int))
+
 (define %draw-text-rgba
   (foreign-lambda void "rl_draw_text"
                   c-string int int int int int int int))
@@ -612,6 +639,24 @@ EOF
     ((4) (call-with-color %draw-circle-lines-rgba (take args 3) (list-ref args 3)))
     ((7) (apply %draw-circle-lines-rgba args))
     (else (bad-arity 'draw-circle-lines args))))
+
+(define (draw-poly . args)
+  (case (length args)
+    ((6) (call-with-color %draw-poly-rgba (take args 5) (list-ref args 5)))
+    ((9) (apply %draw-poly-rgba args))
+    (else (bad-arity 'draw-poly args))))
+
+(define (draw-poly-lines . args)
+  (case (length args)
+    ((6) (call-with-color %draw-poly-lines-rgba (take args 5) (list-ref args 5)))
+    ((9) (apply %draw-poly-lines-rgba args))
+    (else (bad-arity 'draw-poly-lines args))))
+
+(define (draw-poly-lines-ex . args)
+  (case (length args)
+    ((7) (call-with-color %draw-poly-lines-ex-rgba (take args 6) (list-ref args 6)))
+    ((10) (apply %draw-poly-lines-ex-rgba args))
+    (else (bad-arity 'draw-poly-lines-ex args))))
 
 (define (draw-rectangle . args)
   (case (length args)
@@ -822,4 +867,6 @@ EOF
 
 (define cursor-hidden?
   (foreign-lambda bool "IsCursorHidden"))
+
+(define debug-visible? #f)
 )

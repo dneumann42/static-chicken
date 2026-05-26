@@ -6,7 +6,8 @@
    vec2*
    vec2-length
    vec2-normalize
-   vec2-limit)
+   vec2-limit
+   rect-overlaps?)
 
 (import scheme)
 
@@ -43,4 +44,10 @@
     (if (> length max-length)
         (vec2* (vec2-normalize v) max-length)
         v)))
+
+(define (rect-overlaps? ax ay aw ah bx by bw bh)
+  (and (< ax (+ bx bw))
+       (> (+ ax aw) bx)
+       (< ay (+ by bh))
+       (> (+ ay ah) by)))
 )

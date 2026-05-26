@@ -136,7 +136,7 @@ clean_cached_egg_build_outputs() {
     -delete
 }
 
-RUNTIME_EGGS="srfi-1 srfi-18 srfi-69 utf8 symbol-utils check-errors apropos matchable miscmacros record-variants coops"
+RUNTIME_EGGS="srfi-1 srfi-18 srfi-69 srfi-197 utf8 symbol-utils check-errors apropos matchable miscmacros record-variants coops"
 
 for egg in $RUNTIME_EGGS; do
   clean_cached_egg_build_outputs "$egg"
@@ -179,6 +179,7 @@ copy_import_library record-variants record-variants
 copy_import_library coops coops
 copy_import_library coops coops-primitive-objects
 copy_import_library apropos apropos-api
+copy_import_library srfi-197 srfi-197
 
 # 2. raylib 6.0 static lib (per-target/renderer — switching needs a clean rebuild)
 RAYLIB_STAMP="$RAYLIB_SRC/.built-$TARGET-$RENDERER"
@@ -234,6 +235,12 @@ fi
 log "Compiling runtime.scm + raylib.scm and linking ($TARGET/$RENDERER)"
 cd "$ROOT"
 CSC="$CHICKEN_PREFIX/bin/csc"
+CSC_FLAGS=(-O3 -d1 -static)
+if [ -n "${STATIC_CHICKEN_PROFILE:-}" ]; then
+  PROFILE_NAME="${STATIC_CHICKEN_PROFILE_NAME:-$BUILD/$APP_NAME.profile}"
+  CSC_FLAGS+=(-profile -profile-name "$PROFILE_NAME")
+  log "CHICKEN profiler enabled: $PROFILE_NAME"
+fi
 
 case "$TARGET" in
   wayland)
@@ -259,7 +266,7 @@ fi
 
 # Compile raylib bindings as a separate unit.
 # -d1 (not -d0) is required so eval/REPL can resolve module exports at runtime.
-"$CSC" -O3 -d1 -static \
+"$CSC" "${CSC_FLAGS[@]}" \
        -cc "$CC_BUILD" \
        -C "-I$RAYLIB_SRC" \
        -J \
@@ -269,7 +276,7 @@ fi
 # csc's find-object-file searches cwd for raylib.o (matching the unit referenced
 # via runtime.scm's (declare (uses raylib))). Run the link step from $BUILD.
 cd "$BUILD"
-"$CSC" -O3 -d1 -static \
+"$CSC" "${CSC_FLAGS[@]}" \
        -cc "$CC_BUILD" \
        -I "$BUILD" \
        -I "$ROOT" \
@@ -281,6 +288,7 @@ cd "$BUILD"
        -link coops \
        -link coops-primitive-objects \
        -link apropos-api \
+       -link srfi-197 \
        "${LINK_LIBS[@]}" \
        "$ROOT/runtime.scm" \
        -o "$APP_NAME"
