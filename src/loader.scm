@@ -12,6 +12,16 @@
     (load path)
     (cons #t #f)))
 
+(define (try-load-module spec)
+  (handle-exceptions exn
+    (cons #f (condition->runtime-error
+              exn
+              (format #f "load module ~A from ~A"
+                      (module-spec-name spec)
+                      (module-spec-path spec))))
+    (eval `(module ,(module-spec-name spec) * ,@(module-spec-forms spec)))
+    (cons #t #f)))
+
 (define (safe-load! path)
   (let ((result (try-load path)))
     (if (car result)
@@ -31,10 +41,7 @@
     (for-each (lambda (p) (hash-table-set! path-set p #t)) paths)
     (for-each
      (lambda (s)
-       (for-each
-        (lambda (name)
-          (hash-table-set! name->path name (module-spec-path s)))
-        (module-spec-defines s)))
+       (hash-table-set! name->path (module-spec-name s) (module-spec-path s)))
      specs)
     (for-each
      (lambda (s)
@@ -96,10 +103,7 @@
     (for-each (lambda (p) (hash-table-set! path-set p #t)) all)
     (for-each
      (lambda (s)
-       (for-each
-        (lambda (name)
-          (hash-table-set! name->path name (module-spec-path s)))
-        (module-spec-defines s)))
+       (hash-table-set! name->path (module-spec-name s) (module-spec-path s)))
      specs)
     (for-each
      (lambda (s)
@@ -132,7 +136,7 @@
 	  (when announce-reload?
 	    (print "[reload] " path)
 	    (flush-output))
-	  (let ((result (try-load path)))
+	  (let ((result (try-load-module (ensure-module-spec path))))
 	    (if (car result)
 		(loop (cdr paths))
 		(broadcast-error! (cdr result)))))))))

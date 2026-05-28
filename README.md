@@ -12,9 +12,8 @@ Use this repository as a submodule in each app:
 
 ```text
 my-app/
-  main.scm
   src/
-  plugins/
+    main.scm
   vendor/static-chicken/
 ```
 
@@ -24,15 +23,17 @@ Add it with:
 git submodule add git@github.com:dneumann42/static-chicken.git vendor/static-chicken
 ```
 
-`main.scm`, `src/**/*.scm`, and `plugins/**/*.scm` are loaded by the host and
-watched for changes. `runtime.scm`, `raylib.scm`, the Raylib patch, and the
-build/bootstrap scripts stay in the submodule.
+Every `src/**/*.scm` file is loaded by the host as a module named from its path:
+`src/main.scm` becomes `main`, and `src/gameplay/doors.scm` becomes
+`gameplay-doors`. Source files should contain normal top-level forms without a
+manual `(module ...)` wrapper. `runtime.scm`, `raylib.scm`, the Raylib patch,
+and the build/bootstrap scripts stay in the submodule.
 
 ## Automated Setup
 
 Put this script in the project directory you want to turn into a
 `static-chicken` app. It adds `static-chicken` as a submodule, writes a starter
-`main.scm`, bootstraps the SDK, and builds the first Wayland binary. The binary
+`src/main.scm`, bootstraps the SDK, and builds the first Wayland binary. The binary
 name is derived from the project directory name.
 
 ```sh
@@ -50,26 +51,31 @@ if [ ! -d .git ]; then
   git init
 fi
 
-mkdir -p src plugins vendor
-touch src/.gitkeep plugins/.gitkeep
+mkdir -p src vendor
 
 if [ ! -d vendor/static-chicken ]; then
   git submodule add "$SDK_URL" vendor/static-chicken
 fi
 
-if [ ! -f main.scm ]; then
-  cat > main.scm <<'SCM'
-(once! 'window
-       (lambda ()
-         (init-window 800 600 "static-chicken app")
-         (set-target-fps 60)))
+if [ ! -f src/main.scm ]; then
+  cat > src/main.scm <<'SCM'
+(import scheme (chicken eval) raylib)
 
-(set! *on-draw*
-      (lambda ()
-        (draw-rectangle 200 150 400 300 color-tomato)
-        (draw-rectangle-lines 200 150 400 300 'raywhite)
-        (draw-text "edit main.scm" 300 100 28 'raywhite)
-        (draw-text "REPL: rlwrap nc localhost 1234" 260 470 18 'lightgray)))
+(define (runtime-call name . args)
+  (apply (eval name) args))
+
+(define (init)
+  (init-window 800 600 "static-chicken app")
+  (set-target-fps 60))
+
+(runtime-call 'once! 'window init)
+(runtime-call
+ 'set-on-draw!
+ (lambda ()
+   (draw-rectangle 200 150 400 300 color-tomato)
+   (draw-rectangle-lines 200 150 400 300 'raywhite)
+   (draw-text "edit src/main.scm" 300 100 28 'raywhite)
+   (draw-text "REPL: rlwrap nc localhost 1234" 260 470 18 'lightgray)))
 SCM
 fi
 
@@ -157,9 +163,9 @@ The host reads these environment variables at startup:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `STATIC_CHICKEN_APP_ROOT` | current directory | Root directory for app files |
-| `STATIC_CHICKEN_ENTRY` | `main.scm` | Entry file loaded after watched source modules |
+| `STATIC_CHICKEN_ENTRY` | `src/main.scm` | Legacy entry setting; source loading now uses watched source roots |
 | `STATIC_CHICKEN_RENDERER` | `software` | Build-time renderer selection for `build.sh`: `software` or `hardware` |
-| `STATIC_CHICKEN_WATCH_DIRS` | `src:plugins` | Colon-separated directories to hot-load/watch |
+| `STATIC_CHICKEN_WATCH_DIRS` | `src` | Colon-separated source roots to auto-module-load/watch |
 | `STATIC_CHICKEN_WATCH` | unset | Set to `1` to poll watched files every frame and reload on change. When unset, sources are loaded once at startup and reloads must be triggered manually (REPL `(check-watches!)` or the Emacs hook). |
 | `STATIC_CHICKEN_DEBUG_FONT` | `vendor/static-chicken/assets/fonts/SpaceMono-Regular.ttf` | TTF used by the runtime error overlay |
 | `STATIC_CHICKEN_LOG_LINES` | `200` | Maximum stdout lines kept in the in-game log panel |
@@ -320,7 +326,7 @@ app repository.
 
 ## Example
 
-This repository includes `examples/basic/main.scm`. From the SDK root:
+This repository includes `examples/basic/src/main.scm`. From the SDK root:
 
 ```sh
 STATIC_CHICKEN_APP_ROOT=examples/basic ./configure.sh

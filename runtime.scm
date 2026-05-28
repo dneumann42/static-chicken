@@ -2,7 +2,7 @@
 ;;
 ;; Responsibilities:
 ;;   * spawn a TCP REPL server (sexp-over-TCP, 127.0.0.1:$REPL_PORT)
-;;   * load main.scm + every .scm under src/ and plugins/, recursively
+;;   * load every .scm under src/ as a path-derived module
 ;;     relative to $STATIC_CHICKEN_APP_ROOT (defaults to cwd)
 ;;   * watch them; reload on mtime change
 ;;   * dispatch *on-draw* and *on-update* every frame, catch errors
@@ -64,6 +64,12 @@
     (hash-table-set! *once-keys* key #t)
     (thunk)))
 
+(define (set-on-draw! thunk)
+  (set! *on-draw* thunk))
+
+(define (set-on-update! thunk)
+  (set! *on-update* thunk))
+
 (define (env/default name default)
   (let ((value (get-environment-variable name)))
     (if (and value (not (string=? value ""))) value default)))
@@ -84,7 +90,7 @@
         root
         (path-join (current-directory) root))))
 
-(define *app-entry* (env/default "STATIC_CHICKEN_ENTRY" "main.scm"))
+(define *app-entry* (env/default "STATIC_CHICKEN_ENTRY" "src/main.scm"))
 
 (define *debug-font-path*
   (env/default "STATIC_CHICKEN_DEBUG_FONT"
@@ -99,7 +105,7 @@
 
 (define *watch-dirs*
   (filter (lambda (s) (not (string=? s "")))
-          (string-split (env/default "STATIC_CHICKEN_WATCH_DIRS" "src:plugins")
+          (string-split (env/default "STATIC_CHICKEN_WATCH_DIRS" "src")
                         ":")))
 
 (define *watch-enabled?*
