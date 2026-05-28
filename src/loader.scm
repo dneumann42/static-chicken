@@ -28,6 +28,28 @@
         (clear-error!)
         (broadcast-error! (cdr result)))))
 
+(define *hotload-hook-module*
+  (string->symbol (env/default "STATIC_CHICKEN_HOTLOAD_MODULE" "apothecary")))
+
+(define (hook-procedure hook)
+  (or (handle-exceptions _ #f (eval hook))
+      (handle-exceptions _ #f
+        (eval hook (module-environment *hotload-hook-module*)))))
+
+(define (try-call-hook hook . args)
+  (handle-exceptions exn
+    (cons #f (condition->runtime-error exn (format #f "~A" hook)))
+    (let ((proc (hook-procedure hook)))
+      (if (procedure? proc)
+          (cons #t (apply proc args))
+          (cons #t #f)))))
+
+(define (capture-hotload-state)
+  (try-call-hook 'before-hotload!))
+
+(define (restore-hotload-state! saved-state)
+  (try-call-hook 'after-hotload! saved-state))
+
 (define (topo-sort paths)
   ;; Order files so every module loads after the files that define modules
   ;; it imports. Ties broken by filename for determinism. On cycle, emit a
@@ -128,15 +150,26 @@
     (hash-table-keys visited)))
 
 (define (load-in-order! paths announce-reload?)
-  (let ((ordered (topo-sort paths)))
+  (let ((ordered (topo-sort paths))
+        (saved-state-result (and announce-reload? (capture-hotload-state))))
     (clear-error!)
-    (let loop ((paths ordered))
-      (when (pair? paths)
-	(let ((path (car paths)))
-	  (when announce-reload?
-	    (print "[reload] " path)
-	    (flush-output))
-	  (let ((result (try-load-module (ensure-module-spec path))))
-	    (if (car result)
-		(loop (cdr paths))
-		(broadcast-error! (cdr result)))))))))
+    (let ((loaded?
+           (let loop ((paths ordered))
+             (cond
+              ((null? paths) #t)
+              (else
+	       (let ((path (car paths)))
+	         (when announce-reload?
+	           (print "[reload] " path)
+	           (flush-output))
+	         (let ((result (try-load-module (ensure-module-spec path))))
+	           (if (car result)
+		       (loop (cdr paths))
+		       (begin
+                         (broadcast-error! (cdr result))
+                         #f)))))))))
+      (when (and announce-reload? saved-state-result (car saved-state-result))
+        (let ((restore-result (restore-hotload-state! (cdr saved-state-result))))
+          (unless (car restore-result)
+            (broadcast-error! (cdr restore-result)))))
+      loaded?)))

@@ -164,6 +164,7 @@ The host reads these environment variables at startup:
 | --- | --- | --- |
 | `STATIC_CHICKEN_APP_ROOT` | current directory | Root directory for app files |
 | `STATIC_CHICKEN_ENTRY` | `src/main.scm` | Legacy entry setting; source loading now uses watched source roots |
+| `STATIC_CHICKEN_HOTLOAD_MODULE` | `apothecary` | Module searched for optional `before-hotload!` / `after-hotload!` hooks |
 | `STATIC_CHICKEN_RENDERER` | `software` | Build-time renderer selection for `build.sh`: `software` or `hardware` |
 | `STATIC_CHICKEN_WATCH_DIRS` | `src` | Colon-separated source roots to auto-module-load/watch |
 | `STATIC_CHICKEN_WATCH` | unset | Set to `1` to poll watched files every frame and reload on change. When unset, sources are loaded once at startup and reloads must be triggered manually (REPL `(check-watches!)` or the Emacs hook). |
