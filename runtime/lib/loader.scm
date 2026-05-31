@@ -19,7 +19,16 @@
               (format #f "load module ~A from ~A"
                       (module-spec-name spec)
                       (module-spec-path spec))))
-    (eval `(module ,(module-spec-name spec) * ,@(module-spec-forms spec)))
+    (let* ((wrapper-path (module-wrapper-path spec))
+           (wrapper-dir *module-wrapper-dir*))
+      (ensure-module-wrapper-dir! wrapper-dir)
+      (call-with-output-file wrapper-path
+        (lambda (port)
+          (write `(module ,(module-spec-name spec) *
+                   ,@(module-spec-forms spec))
+                 port)
+          (newline port)))
+      (load wrapper-path))
     (cons #t #f)))
 
 (define (safe-load! path)
@@ -27,6 +36,17 @@
     (if (car result)
         (clear-error!)
         (broadcast-error! (cdr result)))))
+
+(define *module-wrapper-dir*
+  (app-path "build/static-chicken/module-wrappers"))
+
+(define (module-wrapper-path spec)
+  (path-join *module-wrapper-dir*
+             (string-append (symbol->string (module-spec-name spec)) ".scm")))
+
+(define (ensure-module-wrapper-dir! dir)
+  (unless (and (file-exists? dir) (directory? dir))
+    (create-directory dir)))
 
 (define *debug-loads?*
   (let ((value (get-environment-variable "STATIC_CHICKEN_DEBUG_LOADS")))

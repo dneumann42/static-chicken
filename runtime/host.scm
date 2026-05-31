@@ -16,6 +16,7 @@
 ;;   once! KEY THUNK  CL-defvar-style idempotent init
 
 (declare (uses raylib))
+(declare (uses coops coops-primitive-objects))
 
 (import (chicken base) (chicken eval) (chicken load)
         (chicken file) (chicken file.posix)
@@ -29,18 +30,7 @@
         srfi-197
         raylib
         apropos-api
-        matchable miscmacros record-variants
-        (only coops
-              define-class
-              define-generic
-              define-method
-              make
-              <standard-object>
-              class-of
-              subclass?
-              class-name
-              print-object)
-        coops-primitive-objects)
+        matchable miscmacros record-variants)
 
 (define *on-draw*     (lambda () #f))
 (define *on-update*   (lambda () #f))
@@ -158,8 +148,6 @@
      "vendor/static-chicken/generated/imports/matchable.import.scm"
      "vendor/static-chicken/generated/imports/miscmacros.import.scm"
      "vendor/static-chicken/generated/imports/record-variants.import.scm"
-     "vendor/static-chicken/generated/imports/coops.import.scm"
-     "vendor/static-chicken/generated/imports/coops-primitive-objects.import.scm"
      "vendor/static-chicken/generated/imports/apropos-api.import.scm"
      "vendor/static-chicken/generated/imports/srfi-197.import.scm")))
 
