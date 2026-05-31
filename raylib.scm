@@ -238,6 +238,14 @@ static void rl_end_mode_2d(void) {
     EndMode2D();
 }
 
+static void rl_begin_scissor_mode(int x, int y, int width, int height) {
+    BeginScissorMode(x, y, width, height);
+}
+
+static void rl_end_scissor_mode(void) {
+    EndScissorMode();
+}
+
 static float rl_get_window_scale_dpi_x(void) {
     Vector2 dpi = GetWindowScaleDPI();
     return dpi.x;
@@ -385,6 +393,12 @@ EOF
 
 (define end-mode-2d
   (foreign-lambda void "rl_end_mode_2d"))
+
+(define begin-scissor-mode
+  (foreign-lambda void "rl_begin_scissor_mode" int int int int))
+
+(define end-scissor-mode
+  (foreign-lambda void "rl_end_scissor_mode"))
 
 (define (begin-mode-2d camera)
   (unless (camera-2d? camera)

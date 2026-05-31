@@ -295,6 +295,8 @@ Returns an absolute directory path, or nil if none is found."
               #'static-chicken--completion-at-point nil t)
     (add-hook 'kill-buffer-hook
               #'static-chicken--write-repl-history nil t)
+    (local-set-key (kbd "C-a") #'comint-bol)
+    (local-set-key (kbd "<home>") #'comint-bol)
     (local-set-key (kbd "C-r") #'comint-history-isearch-backward-regexp)
     (local-set-key (kbd "TAB") #'completion-at-point)
     (local-set-key (kbd static-chicken-repl-find-symbol-key)

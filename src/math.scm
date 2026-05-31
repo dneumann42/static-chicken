@@ -3,6 +3,9 @@
    vec2-x
    vec2-y
    vec2+
+   vec2-
+   vec2-dot
+   vec2-length-squared
    vec2*
    vec2-length
    vec2-normalize
@@ -23,6 +26,17 @@
 (define (vec2+ a b)
   (vec2 (+ (vec2-x a) (vec2-x b))
         (+ (vec2-y a) (vec2-y b))))
+
+(define (vec2- a b)
+  (vec2 (- (vec2-x a) (vec2-x b))
+	(- (vec2-y a) (vec2-y b))))
+
+(define (vec2-dot a b)
+  (+ (* (vec2-x a) (vec2-x b))
+     (* (vec2-y a) (vec2-y b))))
+
+(define (vec2-length-squared v)
+  (vec2-dot v v))
 
 (define (vec2* v scalar)
   (vec2 (* (vec2-x v) scalar)
