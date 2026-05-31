@@ -235,7 +235,7 @@
 
 (define (toggle-debug-overlay!)
   (when (key-pressed? key-f12)
-    (set! debug-visible? (not debug-visible?))))
+    (debug-visible? (not (debug-visible?)))))
 
 (define (update-debug-frame!)
   (let* ((sample-count (vector-length *debug-fps-samples*))
@@ -263,7 +263,7 @@
   (toggle-debug-overlay!))
 
 (define (draw-debug-overlay)
-  (when debug-visible?
+  (when (debug-visible?)
     (ensure-debug-font!)
     (let* ((font-size 18)
            (pad 10)

@@ -1,14 +1,13 @@
 # Bootstrapped sources (fetched by ./configure.sh)
-/chicken-5.4.0/
-/chicken-5.4.0.tar.gz
-/vendor/raylib/
-/vendor/deps/src/
-/vendor/deps/*.tar.*
+/third_party/chicken/chicken-5.4.0/
+/third_party/chicken/chicken-5.4.0.tar.gz
+/third_party/native/raylib/
+/third_party/native/deps/
 
 # Build outputs
-/chicken-musl/
-/chicken-native/
-/vendor/deps/prefix/
+/toolchains/chicken-musl/
+/toolchains/chicken-native/
+/generated/
 /build/
 **/build/static-chicken/
 
@@ -23,5 +22,6 @@
 *.a
 
 # Editor / OS detritus
+*.elc
 *.swp
 .DS_Store

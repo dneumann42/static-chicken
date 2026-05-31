@@ -28,6 +28,13 @@
         (clear-error!)
         (broadcast-error! (cdr result)))))
 
+(define *debug-loads?*
+  (let ((value (get-environment-variable "STATIC_CHICKEN_DEBUG_LOADS")))
+    (and value
+         (not (string=? value ""))
+         (not (string=? value "0"))
+         (not (string=? value "false")))))
+
 (define *hotload-hook-module*
   (string->symbol (env/default "STATIC_CHICKEN_HOTLOAD_MODULE" "apothecary")))
 
@@ -161,6 +168,9 @@
 	       (let ((path (car paths)))
 	         (when announce-reload?
 	           (print "[reload] " path)
+	           (flush-output))
+	         (when *debug-loads?*
+	           (print "[load] " path)
 	           (flush-output))
 	         (let ((result (try-load-module (ensure-module-spec path))))
 	           (if (car result)

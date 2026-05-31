@@ -1,20 +1,15 @@
 diff --git a/src/platforms/rcore_desktop_rgfw.c b/src/platforms/rcore_desktop_rgfw.c
-index 4926ee0..b48b3eb 100755
+index 1a4831b..4926ee0 100755
 --- a/src/platforms/rcore_desktop_rgfw.c
 +++ b/src/platforms/rcore_desktop_rgfw.c
-@@ -1134,6 +1134,17 @@ void SwapScreenBuffer(void)
-             // copy rlsw pixel data to the surface framebuffer
-             swReadPixels(0, 0, platform.surfaceWidth, platform.surfaceHeight, SW_RGBA, SW_UNSIGNED_BYTE, platform.surfacePixels);
+@@ -1767,7 +1767,9 @@ int InitPlatform(void)
+     // NOTE: RGFW's exit key is distinct from raylib's exit key and
+     // must be set to NULL to not interfere
+     RGFW_window_setExitKey(platform.window, RGFW_keyNULL);
+-    RGFW_window_makeCurrentWindow_OpenGL(platform.window);
++    #if !defined(GRAPHICS_API_OPENGL_SOFTWARE)
++        RGFW_window_makeCurrentWindow_OpenGL(platform.window);
++    #endif
  
-+            // The software renderer keeps framebuffer alpha. When semi-transparent
-+            // primitives are blended onto the opaque scene, that alpha can drop
-+            // below 255 and the desktop compositor shows stale pixels through
-+            // the window surface. Present the app window as fully opaque.
-+            for (int i = 0; i < (platform.surfaceWidth * platform.surfaceHeight); i += 1)
-+            {
-+                platform.surfacePixels[i*4 + 3] = 255;
-+            }
-+
-             // Mac wants a different pixel order. I cant seem to get this to work any other way
-             #if defined(__APPLE__)
-                 unsigned char temp = 0;
+     //----------------------------------------------------------------------------
+ 

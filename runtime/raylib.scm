@@ -882,5 +882,5 @@ EOF
 (define cursor-hidden?
   (foreign-lambda bool "IsCursorHidden"))
 
-(define debug-visible? #f)
+(define debug-visible? (make-parameter #f))
 )

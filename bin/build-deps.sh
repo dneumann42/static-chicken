@@ -1,11 +1,11 @@
 #!/bin/bash
 # Build libffi, wayland-client, and libxkbcommon as static musl libs into
-# vendor/deps/prefix. Invoked once before build.sh wayland.
+# third_party/native/deps/prefix. Invoked once before build.sh wayland.
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
-DEPS="$ROOT/vendor/deps"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DEPS="$ROOT/third_party/native/deps"
 SRC="$DEPS/src"
 PREFIX="$DEPS/prefix"
 JOBS="${JOBS:-$(nproc)}"

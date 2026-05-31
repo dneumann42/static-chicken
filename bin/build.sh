@@ -9,10 +9,10 @@
 #   software (default)  CPU software renderer.
 #   hardware            OpenGL 3.3 hardware renderer.
 #
-# Usage:  ./build.sh [wayland|x11] [software|hardware]
+# Usage:  ./bin/build.sh [wayland|x11] [software|hardware]
 #
 # When used as a submodule, run this script from the consumer project root:
-#   vendor/static-chicken/build.sh wayland hardware
+#   vendor/static-chicken/bin/build.sh wayland hardware
 #
 # Environment:
 #   STATIC_CHICKEN_APP_ROOT   app source root; defaults to current directory
@@ -47,7 +47,7 @@ case "$RENDERER" in software|hardware) ;; *)
   echo "Unknown renderer: $RENDERER (expected: software | hardware)"; exit 1;;
 esac
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_ROOT="${STATIC_CHICKEN_APP_ROOT:-$PWD}"
 APP_ROOT="$(cd "$APP_ROOT" && pwd)"
 APP_NAME="${STATIC_CHICKEN_APP_NAME:-myapp}"
@@ -55,24 +55,32 @@ CC_MUSL="${CC_MUSL:-musl-gcc}"
 CC_NATIVE="${CC_NATIVE:-gcc}"
 JOBS="${JOBS:-$(nproc)}"
 
-CHICKEN_SRC="$ROOT/chicken-5.4.0"
-CHICKEN_TARBALL="$ROOT/chicken-5.4.0.tar.gz"
-RAYLIB_SRC="$ROOT/vendor/raylib/src"
+CHICKEN_SRC="$ROOT/third_party/chicken/chicken-5.4.0"
+CHICKEN_TARBALL="$ROOT/third_party/chicken/chicken-5.4.0.tar.gz"
+RAYLIB_SRC="$ROOT/third_party/native/raylib/src"
 BUILD="$APP_ROOT/build/static-chicken/$TARGET/$RENDERER"
 mkdir -p "$BUILD"
 
 case "$RENDERER" in
   software)
     CC_BUILD="$CC_MUSL"
-    CHICKEN_PREFIX="$ROOT/chicken-musl"
+    CHICKEN_PREFIX="$ROOT/toolchains/chicken-musl"
     ;;
   hardware)
     CC_BUILD="$CC_NATIVE"
-    CHICKEN_PREFIX="$ROOT/chicken-native"
+    CHICKEN_PREFIX="$ROOT/toolchains/chicken-native"
     ;;
 esac
 
 log() { printf '\033[1;36m==> %s\033[0m\n' "$*"; }
+
+ensure_configured() {
+  if [ -d "$CHICKEN_SRC" ] && [ -d "$RAYLIB_SRC" ]; then
+    return 0
+  fi
+  log "Missing vendored sources — running ./bin/configure.sh"
+  SKIP_SYSTEM_PACKAGES=1 "$ROOT/bin/configure.sh"
+}
 
 arch_needs_atomic_libdir() {
   [ -f /etc/os-release ] || return 1
@@ -90,19 +98,16 @@ fi
 
 # 0. Sanity
 command -v "$CC_BUILD" >/dev/null \
-  || { echo "ERROR: $CC_BUILD not found. Run ./configure.sh first."; exit 1; }
-[ -d "$CHICKEN_SRC" ] \
-  || { echo "ERROR: $CHICKEN_SRC missing. Run ./configure.sh first."; exit 1; }
-[ -d "$RAYLIB_SRC" ] \
-  || { echo "ERROR: $RAYLIB_SRC missing. Run ./configure.sh first."; exit 1; }
+  || { echo "ERROR: $CC_BUILD not found. Run ./bin/configure.sh first."; exit 1; }
+ensure_configured
 
 # Build vendored Wayland-stack deps if missing (only needed for software Wayland).
-DEPS_PREFIX="$ROOT/vendor/deps/prefix"
+DEPS_PREFIX="$ROOT/third_party/native/deps/prefix"
 if [ "$TARGET" = wayland ] && [ "$RENDERER" = software ] &&
    [ ! -f "$DEPS_PREFIX/lib64/libwayland-client.a" ] &&
    [ ! -f "$DEPS_PREFIX/lib/libwayland-client.a" ]; then
   log "Wayland deps missing — running ./build-deps.sh"
-  "$ROOT/build-deps.sh"
+  "$ROOT/bin/build-deps.sh"
 fi
 
 # 1. CHICKEN rebuild (one-time per renderer toolchain)
@@ -115,10 +120,11 @@ if [ ! -x "$CHICKEN_PREFIX/bin/csc" ]; then
   # chicken, such as CHICKEN 6 while building CHICKEN 5.4.0.
   if [ ! -f "$CHICKEN_SRC/buildid" ] || [ ! -f "$CHICKEN_SRC/library.c" ]; then
     [ -f "$CHICKEN_TARBALL" ] \
-      || { echo "ERROR: $CHICKEN_TARBALL missing. Run ./configure.sh first."; exit 1; }
+      || { echo "ERROR: $CHICKEN_TARBALL missing. Run ./bin/configure.sh first."; exit 1; }
     log "Restoring CHICKEN release sources from tarball"
     rm -rf "$CHICKEN_SRC"
-    tar -xzf "$CHICKEN_TARBALL" -C "$ROOT"
+    mkdir -p "$ROOT/third_party/chicken"
+    tar -xzf "$CHICKEN_TARBALL" -C "$ROOT/third_party/chicken"
   fi
 
   cd "$CHICKEN_SRC"
@@ -132,11 +138,11 @@ clean_cached_egg_build_outputs() {
   local cache="${CHICKEN_INSTALL_CACHE:-$HOME/.cache/chicken-install}/$egg"
   [ -d "$cache" ] || return 0
   find "$cache" -type f \
-    \( -name '*.so' -o -name '*.o' -o -name '*.link' -o -name 'build-*' \) \
+    \( -name '*.so' -o -name '*.o' -o -name '*.link' \) \
     -delete
 }
 
-RUNTIME_EGGS="srfi-1 srfi-18 srfi-69 srfi-197 utf8 symbol-utils check-errors apropos matchable miscmacros record-variants coops"
+RUNTIME_EGGS="srfi-1 srfi-18 srfi-69 srfi-197 apropos matchable miscmacros record-variants coops"
 
 for egg in $RUNTIME_EGGS; do
   clean_cached_egg_build_outputs "$egg"
@@ -150,7 +156,7 @@ egg_needs_install() {
   return 1
 }
 
-# 1b. CHICKEN eggs needed by runtime.scm (TCP REPL + hash tables + threads).
+# 1b. CHICKEN eggs needed by runtime/host.scm (TCP REPL + hash tables + threads).
 # Install into the selected CHICKEN repo on first build.
 for egg in $RUNTIME_EGGS; do
   if egg_needs_install "$egg"; then
@@ -165,14 +171,28 @@ copy_import_library() {
   local module="$2"
   local src="${CHICKEN_INSTALL_CACHE:-$HOME/.cache/chicken-install}/$egg/$module.import.scm"
   if [ -f "$src" ]; then
-    install -m 0644 "$src" "$ROOT/$module.import.scm"
-  elif [ ! -f "$ROOT/$module.import.scm" ]; then
+    mkdir -p "$ROOT/generated/imports"
+    install -m 0644 "$src" "$ROOT/generated/imports/$module.import.scm"
+  elif [ ! -f "$ROOT/generated/imports/$module.import.scm" ]; then
     echo "ERROR: missing source import library for $module: $src" >&2
     echo "       Reinstall with: $CHICKEN_PREFIX/bin/chicken-install -cached -force -keep $egg" >&2
     exit 1
   fi
 }
 
+copy_static_import_library() {
+  local src="$1"
+  local dest="$2"
+  if [ -f "$src" ]; then
+    mkdir -p "$ROOT/generated/imports"
+    install -m 0644 "$src" "$ROOT/generated/imports/$dest"
+  elif [ ! -f "$ROOT/generated/imports/$dest" ]; then
+    echo "ERROR: missing static import library: $src" >&2
+    exit 1
+  fi
+}
+
+copy_static_import_library "$ROOT/raylib.import.scm" raylib.import.scm
 copy_import_library matchable matchable
 copy_import_library miscmacros miscmacros
 copy_import_library record-variants record-variants
@@ -231,8 +251,8 @@ if [ ! -f "$RAYLIB_STAMP" ]; then
   touch "$RAYLIB_STAMP"
 fi
 
-# 3. Compile + link the runtime/host (main.scm + src/ + plugins/ load at runtime)
-log "Compiling runtime.scm + raylib.scm and linking ($TARGET/$RENDERER)"
+# 3. Compile + link the runtime/host (host.scm + runtime libs)
+log "Compiling runtime/host.scm + runtime/raylib.scm and linking ($TARGET/$RENDERER)"
 cd "$ROOT"
 CSC="$CHICKEN_PREFIX/bin/csc"
 CSC_FLAGS=(-O3 -d1 -static)
@@ -270,11 +290,11 @@ fi
        -cc "$CC_BUILD" \
        -C "-I$RAYLIB_SRC" \
        -J \
-       -c "$ROOT/raylib.scm" \
+       -c "$ROOT/runtime/raylib.scm" \
        -o "$BUILD/raylib.o"
 
 # csc's find-object-file searches cwd for raylib.o (matching the unit referenced
-# via runtime.scm's (declare (uses raylib))). Run the link step from $BUILD.
+# via runtime/host.scm's (declare (uses raylib))). Run the link step from $BUILD.
 cd "$BUILD"
 "$CSC" "${CSC_FLAGS[@]}" \
        -cc "$CC_BUILD" \
@@ -290,7 +310,7 @@ cd "$BUILD"
        -link apropos-api \
        -link srfi-197 \
        "${LINK_LIBS[@]}" \
-       "$ROOT/runtime.scm" \
+       "$ROOT/runtime/host.scm" \
        -o "$APP_NAME"
 cd "$ROOT"
 

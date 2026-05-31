@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bootstrap a fresh checkout: install system tools, fetch sources, apply patches.
-# After this finishes you can: ./build.sh wayland   (or:  ./build.sh x11)
+# After this finishes you can: ./bin/build.sh wayland   (or: ./bin/build.sh x11)
 #
 # Distros covered: Fedora/RHEL, Debian/Ubuntu, Arch, openSUSE, Alpine.
 # Other distros: prints the package list it would install; install manually
@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 # Pinned source versions
@@ -23,6 +23,10 @@ RAYLIB_URL="https://github.com/raysan5/raylib.git"
 LIBFFI_URL="https://github.com/libffi/libffi/releases/download/v${LIBFFI_VERSION}/libffi-${LIBFFI_VERSION}.tar.gz"
 WAYLAND_URL="https://gitlab.freedesktop.org/wayland/wayland/-/releases/${WAYLAND_VERSION}/downloads/wayland-${WAYLAND_VERSION}.tar.xz"
 XKBCOMMON_URL="https://github.com/xkbcommon/libxkbcommon/archive/refs/tags/xkbcommon-${XKBCOMMON_VERSION}.tar.gz"
+
+CHICKEN_DIR="$ROOT/third_party/chicken"
+RAYLIB_DIR="$ROOT/third_party/native/raylib"
+DEPS_DIR="$ROOT/third_party/native/deps"
 
 log()  { printf '\033[1;36m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m!!  %s\033[0m\n' "$*" >&2; }
@@ -134,25 +138,26 @@ PKGS
 # ----------------------------------------------------------------------------
 
 fetch_chicken() {
-  if [ -d "$ROOT/chicken-${CHICKEN_VERSION}" ]; then
+  if [ -d "$CHICKEN_DIR/chicken-${CHICKEN_VERSION}" ]; then
     log "CHICKEN ${CHICKEN_VERSION} already extracted, skipping."
     return
   fi
-  if [ ! -f "$ROOT/chicken-${CHICKEN_VERSION}.tar.gz" ]; then
+  mkdir -p "$CHICKEN_DIR"
+  if [ ! -f "$CHICKEN_DIR/chicken-${CHICKEN_VERSION}.tar.gz" ]; then
     log "Fetching CHICKEN ${CHICKEN_VERSION}"
-    curl -fsSL -o "$ROOT/chicken-${CHICKEN_VERSION}.tar.gz" "$CHICKEN_URL"
+    curl -fsSL -o "$CHICKEN_DIR/chicken-${CHICKEN_VERSION}.tar.gz" "$CHICKEN_URL"
   fi
   log "Extracting CHICKEN"
-  tar -xzf "$ROOT/chicken-${CHICKEN_VERSION}.tar.gz" -C "$ROOT"
+  tar -xzf "$CHICKEN_DIR/chicken-${CHICKEN_VERSION}.tar.gz" -C "$CHICKEN_DIR"
 }
 
 fetch_raylib() {
-  local target="$ROOT/vendor/raylib"
+  local target="$RAYLIB_DIR"
   if [ -d "$target/.git" ]; then
     log "raylib already cloned, skipping."
   else
     log "Cloning raylib ${RAYLIB_VERSION}"
-    mkdir -p "$ROOT/vendor"
+    mkdir -p "$ROOT/third_party/native"
     git clone --depth 1 --branch "$RAYLIB_VERSION" "$RAYLIB_URL" "$target"
   fi
 
@@ -161,15 +166,17 @@ fetch_raylib() {
     [ -f "$p" ] || continue
     if (cd "$target" && git apply --check --reverse "$p" >/dev/null 2>&1); then
       log "Patch already applied: $(basename "$p")"
-    else
+    elif (cd "$target" && git apply --check "$p" >/dev/null 2>&1); then
       log "Applying patch: $(basename "$p")"
       (cd "$target" && git apply "$p")
+    else
+      warn "Skipping unreadable patch: $(basename "$p")"
     fi
   done
 }
 
 fetch_deps() {
-  local d="$ROOT/vendor/deps"
+  local d="$DEPS_DIR"
   mkdir -p "$d/src"
 
   if [ ! -d "$d/src/libffi-${LIBFFI_VERSION}" ]; then
@@ -223,18 +230,18 @@ fetch_deps
 # CHICKEN eggs needed at compile time (TCP REPL, hash tables, list utils, threads).
 # Install into the musl-built CHICKEN's repo. Build the runtime first if missing.
 install_eggs() {
-  if [ ! -x "$ROOT/chicken-musl/bin/chicken-install" ]; then
-    log "CHICKEN not yet built — eggs will be installed on first ./build.sh."
+  if [ ! -x "$ROOT/toolchains/chicken-musl/bin/chicken-install" ]; then
+    log "CHICKEN not yet built — eggs will be installed on first ./bin/build.sh."
     return
   fi
-  for egg in srfi-1 srfi-18 srfi-69 srfi-197 utf8 symbol-utils check-errors apropos; do
-    if [ ! -f "$ROOT/chicken-musl/lib/chicken/11/${egg}.import.so" ]; then
+  for egg in srfi-1 srfi-18 srfi-69 srfi-197 apropos; do
+    if [ ! -f "$ROOT/toolchains/chicken-musl/lib/chicken/11/${egg}.import.so" ]; then
       log "Installing CHICKEN egg: $egg"
-      (cd /tmp && "$ROOT/chicken-musl/bin/chicken-install" "$egg") \
+      (cd /tmp && "$ROOT/toolchains/chicken-musl/bin/chicken-install" "$egg") \
         || warn "Failed to install $egg — needs network access."
     fi
   done
 }
 install_eggs
 
-log "configure.sh done. Now run:  ./build.sh wayland   (or  ./build.sh x11)"
+log "configure.sh done. Now run:  ./bin/build.sh wayland   (or  ./bin/build.sh x11)"

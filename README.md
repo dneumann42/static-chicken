@@ -15,6 +15,21 @@ my-app/
   src/
     main.scm
   vendor/static-chicken/
+    bin/
+      build.sh
+      configure.sh
+      build-deps.sh
+    runtime/
+      host.scm
+      raylib.scm
+      lib/
+    generated/
+      imports/
+    third_party/
+      chicken/
+      native/
+    tools/
+      emacs/
 ```
 
 Add it with:
@@ -26,8 +41,9 @@ git submodule add git@github.com:dneumann42/static-chicken.git vendor/static-chi
 Every `src/**/*.scm` file is loaded by the host as a module named from its path:
 `src/main.scm` becomes `main`, and `src/gameplay/doors.scm` becomes
 `gameplay-doors`. Source files should contain normal top-level forms without a
-manual `(module ...)` wrapper. `runtime.scm`, `raylib.scm`, the Raylib patch,
-and the build/bootstrap scripts stay in the submodule.
+manual `(module ...)` wrapper. The SDK's own runtime code now lives under
+`runtime/`, generated import libraries live under `generated/imports/`, and the
+build/bootstrap scripts live under `bin/`.
 
 ## Automated Setup
 
@@ -79,8 +95,8 @@ if [ ! -f src/main.scm ]; then
 SCM
 fi
 
-vendor/static-chicken/configure.sh
-STATIC_CHICKEN_APP_NAME="$APP_NAME" vendor/static-chicken/build.sh "$TARGET"
+vendor/static-chicken/bin/configure.sh
+STATIC_CHICKEN_APP_NAME="$APP_NAME" vendor/static-chicken/bin/build.sh "$TARGET"
 
 printf '\nBuilt: %s\n' "build/static-chicken/$TARGET/$APP_NAME"
 printf 'Run from %s with:\n  %s\n' "$PWD" "build/static-chicken/$TARGET/$APP_NAME"
@@ -99,7 +115,7 @@ cd ~/Projects/s-expr-edit
 From the consumer project root:
 
 ```sh
-vendor/static-chicken/configure.sh
+vendor/static-chicken/bin/configure.sh
 ```
 
 That installs system packages when possible, fetches pinned CHICKEN/Raylib
@@ -110,15 +126,15 @@ sources, applies local patches, and prepares vendored Wayland dependencies.
 From the consumer project root:
 
 ```sh
-vendor/static-chicken/build.sh wayland software
+vendor/static-chicken/bin/build.sh wayland software
 ```
 
 or:
 
 ```sh
-vendor/static-chicken/build.sh wayland hardware
-vendor/static-chicken/build.sh x11 software
-vendor/static-chicken/build.sh x11 hardware
+vendor/static-chicken/bin/build.sh wayland hardware
+vendor/static-chicken/bin/build.sh x11 software
+vendor/static-chicken/bin/build.sh x11 hardware
 ```
 
 The output binary is written to:
@@ -135,7 +151,7 @@ Linux hardware rendering.
 Set `STATIC_CHICKEN_APP_NAME` to change the executable name:
 
 ```sh
-STATIC_CHICKEN_APP_NAME=my-game vendor/static-chicken/build.sh wayland hardware
+STATIC_CHICKEN_APP_NAME=my-game vendor/static-chicken/bin/build.sh wayland hardware
 ```
 
 Run the binary from the app root so default runtime paths resolve to the app:
@@ -153,8 +169,8 @@ STATIC_CHICKEN_APP_ROOT=/path/to/my-app build/static-chicken/wayland/hardware/my
 If CHICKEN fails while building `user-pass.scm` with an unresolved
 `make-parameter`, the build picked up an incompatible system `chicken` after the
 release C sources were removed. Update the `static-chicken` submodule and rerun
-`vendor/static-chicken/build.sh`; the script restores the release sources from
-`chicken-5.4.0.tar.gz` before building.
+`vendor/static-chicken/bin/build.sh`; the script restores the release sources
+from `third_party/chicken/chicken-5.4.0.tar.gz` before building.
 
 ## Runtime Configuration
 
@@ -271,14 +287,14 @@ text input:
 
 ## Emacs Integration
 
-`editor/static-chicken.el` ships a minor mode that binds `C-c C-c` to save
+`tools/emacs/static-chicken.el` ships a minor mode that binds `C-c C-c` to save
 every modified `.scm` buffer and send `(check-watches!)` over the TCP REPL so
 the running app reloads only the files that changed. It works whether or not
 the app was started with `STATIC_CHICKEN_WATCH=1`.
 
 ```elisp
 (add-to-list 'load-path
-             (expand-file-name "vendor/static-chicken/editor"
+             (expand-file-name "vendor/static-chicken/tools/emacs"
                                "/path/to/my-app"))
 (require 'static-chicken)
 (add-hook 'scheme-mode-hook #'static-chicken-mode)
@@ -330,8 +346,8 @@ app repository.
 This repository includes `examples/basic/src/main.scm`. From the SDK root:
 
 ```sh
-STATIC_CHICKEN_APP_ROOT=examples/basic ./configure.sh
-STATIC_CHICKEN_APP_ROOT=examples/basic ./build.sh wayland
+STATIC_CHICKEN_APP_ROOT=examples/basic ./bin/configure.sh
+STATIC_CHICKEN_APP_ROOT=examples/basic ./bin/build.sh wayland
 STATIC_CHICKEN_APP_ROOT=examples/basic examples/basic/build/static-chicken/wayland/myapp
 ```
 

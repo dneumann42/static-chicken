@@ -1,4 +1,4 @@
-;; runtime.scm — the static-chicken host. Compiled into the binary.
+;; host.scm — the static-chicken host. Compiled into the binary.
 ;;
 ;; Responsibilities:
 ;;   * spawn a TCP REPL server (sexp-over-TCP, 127.0.0.1:$REPL_PORT)
@@ -29,7 +29,18 @@
         srfi-197
         raylib
         apropos-api
-        matchable miscmacros record-variants coops coops-primitive-objects)
+        matchable miscmacros record-variants
+        (only coops
+              define-class
+              define-generic
+              define-method
+              make
+              <standard-object>
+              class-of
+              subclass?
+              class-name
+              print-object)
+        coops-primitive-objects)
 
 (define *on-draw*     (lambda () #f))
 (define *on-update*   (lambda () #f))
@@ -143,24 +154,24 @@
 (define (load-runtime-import-libraries!)
   (for-each
    load-runtime-import-library!
-   '("vendor/static-chicken/raylib.import.scm"
-     "vendor/static-chicken/matchable.import.scm"
-     "vendor/static-chicken/miscmacros.import.scm"
-     "vendor/static-chicken/record-variants.import.scm"
-     "vendor/static-chicken/coops.import.scm"
-     "vendor/static-chicken/coops-primitive-objects.import.scm"
-     "vendor/static-chicken/apropos-api.import.scm"
-     "vendor/static-chicken/srfi-197.import.scm")))
+   '("vendor/static-chicken/generated/imports/raylib.import.scm"
+     "vendor/static-chicken/generated/imports/matchable.import.scm"
+     "vendor/static-chicken/generated/imports/miscmacros.import.scm"
+     "vendor/static-chicken/generated/imports/record-variants.import.scm"
+     "vendor/static-chicken/generated/imports/coops.import.scm"
+     "vendor/static-chicken/generated/imports/coops-primitive-objects.import.scm"
+     "vendor/static-chicken/generated/imports/apropos-api.import.scm"
+     "vendor/static-chicken/generated/imports/srfi-197.import.scm")))
 
-(include "src/errors.scm")
-(include "src/log-capture.scm")
-(include "src/math.scm")
-(include "src/watch.scm")
-(include "src/loader.scm")
-(include "src/module-spec.scm")
-(include "src/overlays.scm")
-(include "src/repl.scm")
-(include "src/helpers.scm")
+(include "runtime/lib/errors.scm")
+(include "runtime/lib/log-capture.scm")
+(include "runtime/lib/math.scm")
+(include "runtime/lib/watch.scm")
+(include "runtime/lib/loader.scm")
+(include "runtime/lib/module-spec.scm")
+(include "runtime/lib/overlays.scm")
+(include "runtime/lib/repl.scm")
+(include "runtime/lib/helpers.scm")
 
 (define (frame!)
   (poll-repl-accept!)
